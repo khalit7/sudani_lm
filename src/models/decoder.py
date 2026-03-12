@@ -1,6 +1,8 @@
 from fsspec.core import conf
 import torch
+from torch.mps import is_available
 import torch.nn as nn
+from torch.profiler import ProfilerActivity,profile,record_function
 
 class PositionalEmbedding(nn.Module):
     def __init__(self,config) -> None:
@@ -53,7 +55,7 @@ class MaskedMultiHeadAttn(nn.Module):
 
         self.out_proj = nn.Linear(self.d_model,self.d_model)
 
-        causal_mask = torch.tril(torch.ones(self.max_seq_len,self.max_seq_len),diagonal=0) # TODO: save space by converting this to bool
+        causal_mask = torch.tril(torch.ones(self.max_seq_len,self.max_seq_len),diagonal=0).bool() # TODO: save space by converting this to bool
         self.register_buffer("causal_mask",causal_mask)
 
     def forward(self,x,attention_mask):
@@ -70,8 +72,8 @@ class MaskedMultiHeadAttn(nn.Module):
         V = V.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
 
         attn_score = K@Q.transpose(-1,-2)                   # (batch_size,num_heads,seq_len,seq_len)
-        attn_score = attn_score.masked_fill(attention_mask.unsqueeze(1).unsqueeze(1)==0,float("-inf"))
-        attn_score = attn_score.masked_fill(self.causal_mask[0:seq_len,0:seq_len].unsqueeze(0).unsqueeze(0)==0,float("-inf"))
+        final_mask = attention_mask.unsqueeze(1).unsqueeze(1).bool() & self.causal_mask[0:seq_len,0:seq_len].unsqueeze(0).unsqueeze(0)
+        attn_score = attn_score.masked_fill(torch.logical_not(final_mask),value=float("-inf"))
         attn_score = torch.nn.functional.softmax(attn_score,dim=-1)
 
         x = attn_score@V            #(batch_size,num_heads,seq_len,d_k)
@@ -127,9 +129,47 @@ class Decoder(nn.Module):
         x = self.pos_embedding(x)               # (batch_size,seq_len,d_model)
         for layer in self.decoder_layers:
             x = layer(x,attention_mask)         # (batch_size,seq_len,d_model)
-
         x = self.head(x)                        # (batch_size,seq_len,vocab_size)
 
         return x.view(-1,self.vocab_size)
+    
+    def get_model_stats(self,verbose=True):
+        param_size = 0
+        num_params = 0
+        for param in self.parameters():
+            param_size += param.nelement() * param.element_size()
+            num_params += param.nelement()
+        buffer_size = 0
+        num_buffers = 0
+        for buffer in self.buffers():
+            buffer_size += buffer.nelement() * buffer.element_size()
+            num_buffers += buffer.nelement()
+
+        if verbose:
+            print("-"*20)
+            print("number of parameters   : ", num_params)
+            print("number of buffers      :", num_buffers)
+            print("total param size in MB :", param_size/1024**2)
+            print("total buffer size in MB:", buffer_size/1024**2)
+            print("-"*20)
+
+        return {
+                "num_params":num_params,
+                "num_buffers":num_buffers,
+                "param size (MB)": param_size/1024**2,
+                "buffer size (MB)": buffer_size/1024**2
+                }
+
+    def profile_model(self,dummy_input):
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.mps.is_available():
+            device = "mps"
+        self.to(device)
+        dummy_input = {k:v.to(device) for k,v in dummy_input.items()}
+        with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],profile_memory=True,record_shapes=True) as prof:
+            self(**dummy_input)
+        print(prof.key_averages().table(sort_by="self_cuda_memory_usage"))
 
 

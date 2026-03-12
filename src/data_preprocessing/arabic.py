@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 seed = 67
-data_root = Path("~/chat_lm/data").expanduser()
+data_root = Path("~/sudani_lm/data").expanduser()
 
 data_path = data_root/"arab"/"raw"
 full_dataset = load_dataset('lightonai/ArabicWeb24', data_files='ArabicWeb24/**/*.arrow', split='train',cache_dir=data_path)

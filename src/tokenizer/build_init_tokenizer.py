@@ -6,16 +6,16 @@ from transformers import PreTrainedTokenizerFast
 
 random.seed(67)
 
-data_root = Path("~/chat_lm/data")
+data_root = Path("~/sudani_lm/data")
 data_path = data_root/"arab"/"raw"
 
 dataset = load_dataset('lightonai/ArabicWeb24', data_files='ArabicWeb24/**/*.arrow', split='train',cache_dir=data_path.expanduser())
 
 # build the tokenzier
 
-SAVE_DIR = Path("~/chat_lm/tokenizers/init_tokenizer/")
+SAVE_DIR = Path("~/sudani_lm/tokenizers/init_tokenizer/")
 percentage_of_data_to_train_tokenizer = 0.01
-vocab_size = 50 *10**3
+vocab_size = 8 *10**3
 
 num_datapoints = int(len(dataset)*percentage_of_data_to_train_tokenizer)
 random_ids = random.sample( range(0,len(dataset)),num_datapoints )

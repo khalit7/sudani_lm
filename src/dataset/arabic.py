@@ -3,8 +3,8 @@ from datasets import load
 from torch.utils.data import Dataset,DataLoader
 from pathlib import Path
 
-data_root = Path("~/chat_lm/data").expanduser()
-tokenizer_root = Path("~/chat_lm/tokenizers").expanduser()
+data_root = Path("~/sudani_lm/data").expanduser()
+tokenizer_root = Path("~/sudani_lm/tokenizers").expanduser()
 
 tokenizer : AutoTokenizer|None = None
 def get_tokenizer()->PreTrainedTokenizerFast:

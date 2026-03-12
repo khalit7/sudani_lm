@@ -1,3 +1,4 @@
+import torch
 import wandb
 from tqdm import tqdm
 
@@ -7,7 +8,7 @@ from src.dataset.arabic import get_data_loader, get_tokenizer
 from src.trainer import Trainer
 import yaml
 
-config_root = Path("~/chat_lm/configs").expanduser()
+config_root = Path("~/sudani_lm/configs").expanduser()
 config_name = "init_config.yaml"
 
 # reading config file
@@ -34,8 +35,15 @@ config["val_dataloader"]["steps"]   = len(val_dataloader)
 
 # print("----------- initializing the model -------------")
 model = Decoder(config["model"])
+model_stats = model.get_model_stats()
+# dummy_input = {
+#         "input_ids":torch.randint(low=0,high=10,size=(config["train_dataloader"]["batch_size"],1024)),
+#         "attention_mask":torch.ones((config["train_dataloader"]["batch_size"],1024))}
+#
+# model.profile_model(dummy_input)
+config["model"]["stats"] = model_stats
 
-# print("----------- initializing the trainer -----------")
+print("----------- initializing the trainer -----------")
 wandb_run = wandb.init(
 project = "arabic_decoder",
 config=config,
@@ -48,11 +56,8 @@ trainer = Trainer(
         config=config["trainer"]
         )
 
-print("----------- starting training ------------------")
+# print("----------- starting training ------------------")
 trainer.train(train_dataloader,val_dataloader)
 wandb_run.finish()
-
-# for X,Y in tqdm(train_dataloader):
-    # pass
 
 

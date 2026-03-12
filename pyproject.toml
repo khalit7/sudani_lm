@@ -1,5 +1,5 @@
 [project]
-name = "chat-lm"
+name = "sudani-lm"
 version = "0.1.0"
 description = "Train my own llm to response to chat messages"
 readme = "README.md"
@@ -19,3 +19,5 @@ dependencies = [
 
 [[tool.uv.index]]
 url = "https://download.pytorch.org/whl/cu128"
+[tool.uv]
+index-strategy = "unsafe-best-match"
