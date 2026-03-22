@@ -1,14 +1,19 @@
+project: sudani_llm_pretraining
+run: init
 train_dataloader:
   shuffle: true
   batch_size: 128 
-  num_workers: 8
-  prefetch_factor: 4
+  num_workers: 12
+  prefetch_factor: 8
+  pin_memory: true
 
 val_dataloader:
   shuffle: false
   batch_size: 256 
-  num_workers: 8
-  prefetch_factor: 4
+  num_workers: 12
+  prefetch_factor: 8
+  pin_memory: true
+  persistent_workers: true
 
 model:
   max_seq_len: 1024

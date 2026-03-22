@@ -1,24 +1,16 @@
-from transformers import AutoTokenizer,PreTrainedTokenizerFast
 from datasets import load 
 from torch.utils.data import Dataset,DataLoader
 from pathlib import Path
+from src.dataset import utils
 
 data_root = Path("~/sudani_lm/data").expanduser()
-tokenizer_root = Path("~/sudani_lm/tokenizers").expanduser()
-
-tokenizer : AutoTokenizer|None = None
-def get_tokenizer()->PreTrainedTokenizerFast:
-    global tokenizer
-    if tokenizer is None:
-       tokenizer = AutoTokenizer.from_pretrained(tokenizer_root/"init_tokenizer") 
-    return tokenizer
 
 
 class ArabicPretrainingDataset(Dataset):
 
     def __init__(self,hf_dataset) -> None:
         self.dataset = hf_dataset
-        self.tokenzier = get_tokenizer()
+        self.tokenzier =utils.get_tokenizer()
 
 
     def __len__(self):
@@ -39,7 +31,7 @@ class ArabicPretrainingDataset(Dataset):
 
 
 def collate_fn(batch:list[tuple[str,str]]):
-    tokenizer = get_tokenizer()
+    tokenizer = utils.get_tokenizer()
     X = tokenizer(\
         [x[0] for x in batch], 
         padding=True,

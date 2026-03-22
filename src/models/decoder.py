@@ -55,7 +55,7 @@ class MaskedMultiHeadAttn(nn.Module):
 
         self.out_proj = nn.Linear(self.d_model,self.d_model)
 
-        causal_mask = torch.tril(torch.ones(self.max_seq_len,self.max_seq_len),diagonal=0).bool() # TODO: save space by converting this to bool
+        causal_mask = torch.tril(torch.ones(self.max_seq_len,self.max_seq_len),diagonal=0).bool() 
         self.register_buffer("causal_mask",causal_mask)
 
     def forward(self,x,attention_mask):
@@ -119,7 +119,7 @@ class Decoder(nn.Module):
         self.num_layers = config["num_layers"]
         self.token_embedding = nn.Embedding(self.vocab_size,self.d_model)
         self.pos_embedding   = PositionalEmbedding(config)
-        self.decoder_layers  = nn.ModuleList( DecoderLayer(config) for _ in range(self.num_layers) ) # TODO: implement
+        self.decoder_layers  = nn.ModuleList( DecoderLayer(config) for _ in range(self.num_layers) ) 
         self.head            = nn.Linear(self.d_model,self.vocab_size)
 
     def forward(self,input_ids,attention_mask):

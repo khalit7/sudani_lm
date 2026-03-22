@@ -8,8 +8,7 @@ import wandb
 
 from .generator import Generator
 
-from .dataset.arabic import get_tokenizer
-
+from src.dataset.utils import get_tokenizer
 
 class Trainer:
     def __init__(self,model,wandb_run,config) -> None:

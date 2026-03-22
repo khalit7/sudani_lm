@@ -1,6 +1,7 @@
+from pandas.core.base import Shape
 from torch._C import device
 from torch.mps import is_available
-from .dataset.arabic import get_tokenizer
+from src.dataset.utils import get_tokenizer 
 import torch
 
 class Generator:
@@ -15,15 +16,21 @@ class Generator:
             self.device = "mps"
 
 
-    def generate(self,prompt="<s>",max_tokens=50,temperature=None,top_p=None,top_k=None):
+    def generate(self,prompt="<s>",max_tokens=50,temperature=1,top_p=None,top_k=None):
+        input_ids = self.tokenizer.encode(prompt,return_tensors="pt").to(self.device)
         with torch.no_grad():
-            tokens = self.tokenizer.encode(prompt)
-            while len(tokens) < max_tokens and tokens[-1] != self.tokenizer.eos_token_id:
-                output = self.model(**{"input_ids":torch.tensor(tokens,device=self.device).unsqueeze(0), "attention_mask":torch.ones((1,len(tokens)),device=self.device)})
-                token_id = output[-1,:].flatten().argmax().item()
-                tokens.append(token_id)
+            while input_ids.shape[-1] < max_tokens and input_ids[...,-1].item() != self.tokenizer.eos_token_id:
+                logits = self.model(**{"input_ids":input_ids ,"attention_mask":torch.ones(input_ids.shape,device=self.device)})
+                logits = logits[-1,...].flatten() # get the logits of only the final token
+                if temperature == 0:
+                    token_id = logits.argmax().unsqueeze(0)
+                else:
+                    prob = torch.nn.functional.softmax(logits/temperature,dim=-1)
+                    token_id = torch.multinomial(prob,num_samples=1)
+                token_id = token_id.unsqueeze(0)
+                input_ids = torch.cat([input_ids,token_id],dim=-1) 
 
 
-        return "\n".join(self.tokenizer.convert_ids_to_tokens(tokens))
+        return " ".join(self.tokenizer.decode(input_ids)[0].split())
 
     # TODO: implement kv caching
