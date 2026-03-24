@@ -4,14 +4,14 @@ import wandb
 from tqdm import tqdm
 
 from pathlib import Path
-from src.models.decoder import Decoder
+from src.models.decoder import DecoderLMHeadModel
 from src.dataset.arabic import get_data_loader
 from src.dataset.utils import get_tokenizer
 from src.trainer import Trainer
 from src.generator import Generator
 import yaml
 
-is_profile_run = False
+is_profile_run = True
 
 config_root = Path("~/sudani_lm/configs").expanduser()
 config_name = "pretraining/init_config.yaml"
@@ -32,7 +32,7 @@ config["train_dataloader"]["steps"] = len(train_dataloader)
 config["val_dataloader"]["steps"]   = len(val_dataloader)
 
 print("----------- initializing the model -------------")
-model = Decoder(config["model"])
+model = DecoderLMHeadModel(config["model"])
 model_stats = model.get_model_stats()
 config["model"]["stats"] = model_stats
 if is_profile_run:

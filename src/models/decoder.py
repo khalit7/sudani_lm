@@ -84,9 +84,6 @@ class MaskedMultiHeadAttn(nn.Module):
         return x
 
 
-
-
-
 class DecoderLayer(nn.Module):
     def __init__(self,config) -> None:
         super().__init__()
@@ -111,16 +108,15 @@ class DecoderLayer(nn.Module):
 
         return x
 
-class Decoder(nn.Module):
+class DecoderModel(nn.Module):
     def __init__(self,config ) -> None:
         super().__init__()
         self.vocab_size = config["vocab_size"]
-        self.d_model    = config["d_model"]
         self.num_layers = config["num_layers"]
+        self.d_model    = config["d_model"]
         self.token_embedding = nn.Embedding(self.vocab_size,self.d_model)
         self.pos_embedding   = PositionalEmbedding(config)
         self.decoder_layers  = nn.ModuleList( DecoderLayer(config) for _ in range(self.num_layers) ) 
-        self.head            = nn.Linear(self.d_model,self.vocab_size)
 
     def forward(self,input_ids,attention_mask):
         # input_ids has shape        (batch_size,seq_len)
@@ -129,9 +125,7 @@ class Decoder(nn.Module):
         x = self.pos_embedding(x)               # (batch_size,seq_len,d_model)
         for layer in self.decoder_layers:
             x = layer(x,attention_mask)         # (batch_size,seq_len,d_model)
-        x = self.head(x)                        # (batch_size,seq_len,vocab_size)
-
-        return x.view(-1,self.vocab_size)
+        return x
     
     def get_model_stats(self,verbose=True):
         param_size = 0
@@ -172,4 +166,15 @@ class Decoder(nn.Module):
             self(**dummy_input)
         print(prof.key_averages().table(sort_by="self_cuda_memory_usage"))
 
+class DecoderLMHeadModel(DecoderModel):
+    def __init__(self, config) -> None:
+        super().__init__(config)
+        self.head = nn.Linear(self.d_model,self.vocab_size)
+
+    def forward(self,input_ids,attention_mask):
+        hidden_states = super().forward(input_ids,attention_mask)
+
+        output = self.head(hidden_states)
+
+        return output.view(-1,self.vocab_size)
 
