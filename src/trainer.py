@@ -18,6 +18,7 @@ class Trainer:
         tokenizer = get_tokenizer()
         self.loss_fn = CrossEntropyLoss(ignore_index = tokenizer.pad_token_id )
         self.optimizer = Adam(self.model.parameters(),lr=config["learning_rate"])
+        self.batch_size = self.config["batch_size"]
 
         self.wandb_run.define_metric("val_loss",summary="min")
         self.generation_table = wandb.Table(columns=["step","prompt","generation"],log_mode="MUTABLE")
@@ -34,43 +35,59 @@ class Trainer:
         (self.checkpoints_root/"last_x").mkdir(parents=True,exist_ok=True)
 
     def train(self,train_dataloader,val_dataloader):
+
+        if self.batch_size % train_dataloader.batch_size != 0 :
+            raise Exception("trainer batch size and train dataloader batch size are not compatible")
+        grad_acc_target_steps = self.batch_size//train_dataloader.batch_size
+ 
+        total_steps = (len(train_dataloader)+grad_acc_target_steps-1)//grad_acc_target_steps
+        warmup_steps = int( total_steps*self.config["warmup_percentage"] )
+
+        linear_lr_scheduler = LinearLR(self.optimizer,start_factor=self.config["warmup_start_factor"],end_factor=1,total_iters=warmup_steps)
+        cosine_lr_scheduler = CosineAnnealingLR(self.optimizer,T_max=total_steps-warmup_steps)
+
+        self.lr_scheduler = SequentialLR(self.optimizer,[linear_lr_scheduler,cosine_lr_scheduler],milestones=[warmup_steps])
+
         self.model.to(self.device)
         self.model.train()
-        warmup_steps = len(train_dataloader)*self.config["warmup_percentage"]
-        linear_lr_scheduler = LinearLR(self.optimizer,start_factor=self.config["warmup_start_factor"],end_factor=1,total_iters=warmup_steps)
-        cosine_lr_scheduler = CosineAnnealingLR(self.optimizer,T_max=len(train_dataloader)-warmup_steps)
-        self.lr_scheduler = SequentialLR(self.optimizer,[linear_lr_scheduler,cosine_lr_scheduler],milestones=[warmup_steps])
+
         print("Starting training on device = ",self.device)
 
+        grad_acc_current_steps = 0
+        step = 0
+        total_loss = 0
         for epoch in range(self.config["num_epochs"]):
-            for step,(X,Y) in tqdm(enumerate(train_dataloader)):
+            for X,Y in tqdm(train_dataloader):
 
                 # run evaluation
-                if step%self.config["eval_every"] == 0:
+                if step%self.config["eval_every"] == 0 and grad_acc_current_steps == 0:
                     self.eval(val_dataloader,epoch,step)
 
-                # run training step
-                self.train_step(X,Y,step)
+                # run training step with grad accumulation
+                X = {k:v.to(self.device) for k,v in X.items() }
+                Y = Y.flatten().to(self.device)
+                output = self.model(**X)
+                loss = self.loss_fn(output,Y)
+                loss = loss/grad_acc_target_steps
+                loss.backward()
 
+                total_loss += loss.detach().item()
+                grad_acc_current_steps += 1
 
-
-    def train_step(self,X,Y,step):
-        X = { k:v.to(self.device) for k,v in X.items() }
-        Y = Y.to(self.device)
-        output = self.model(**X)
-        loss = self.loss_fn(output,Y)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        self.lr_scheduler.step()
-
-        self.wandb_run.log(
-                {
-                    "train_loss":loss.detach().item(),
+                if grad_acc_current_steps == grad_acc_target_steps :
+                    step += 1
+                    grad_acc_current_steps = 0
+                    self.optimizer.step()
+                    self.lr_scheduler.step()
+                    self.optimizer.zero_grad()
+                    self.wandb_run.log(
+                                        {
+                    "train_loss":total_loss,
                     "learning_rate":self.optimizer.param_groups[0]["lr"]
-                },
-                step=step
-                )
+                                        },
+                                        step=step)
+                    total_loss = 0
+
 
 
     def eval(self,dataloader,epoch,step):
@@ -79,7 +96,7 @@ class Trainer:
         with torch.no_grad():
             for X,Y in tqdm(dataloader):
                 X = {k:v.to(self.device) for k,v in X.items()}
-                Y = Y.to(self.device)
+                Y = Y.flatten().to(self.device)
                 output = self.model(**X)
                 loss   = self.loss_fn(output,Y) 
                 total_loss += loss.item()

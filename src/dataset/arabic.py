@@ -46,7 +46,7 @@ def collate_fn(batch:list[tuple[str,str]]):
         max_length=1024,
         return_tensors="pt"
         )
-    return X,Y["input_ids"].flatten()
+    return X,Y["input_ids"]
 
 
 def get_data_loader(split,**kwargs):

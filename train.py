@@ -11,7 +11,7 @@ from src.trainer import Trainer
 from src.generator import Generator
 import yaml
 
-is_profile_run = True
+is_profile_run = False 
 
 config_root = Path("~/sudani_lm/configs").expanduser()
 config_name = "pretraining/init_config.yaml"
@@ -36,11 +36,21 @@ model = DecoderLMHeadModel(config["model"])
 model_stats = model.get_model_stats()
 config["model"]["stats"] = model_stats
 if is_profile_run:
-    dummy_input = {
+    dummy_input_train = {
              "input_ids":torch.randint(low=0,high=10,size=(config["train_dataloader"]["batch_size"],1024)),
              "attention_mask":torch.ones((config["train_dataloader"]["batch_size"],1024))}
+
+    dummy_input_val= {
+             "input_ids":torch.randint(low=0,high=10,size=(config["val_dataloader"]["batch_size"],1024)),
+             "attention_mask":torch.ones((config["val_dataloader"]["batch_size"],1024))}
     
-    model.profile_model(dummy_input)
+
+    train_profile,val_profile = model.profile_model(dummy_input_train,dummy_input_val)
+    print("TRAIN PROFILE: \n \n ")
+    print(train_profile)
+    print()
+    print("VAL PROFILE: \n \n ")
+    print(val_profile)
     sys.exit()
 
 

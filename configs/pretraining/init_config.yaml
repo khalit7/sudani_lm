@@ -2,14 +2,15 @@ project: sudani_llm_pretraining
 run: init
 train_dataloader:
   shuffle: true
-  batch_size: 128 
+  batch_size: 32 
   num_workers: 12
   prefetch_factor: 8
   pin_memory: true
+  drop_last:  True
 
 val_dataloader:
   shuffle: false
-  batch_size: 256 
+  batch_size: 128 
   num_workers: 12
   prefetch_factor: 8
   pin_memory: true
@@ -18,11 +19,12 @@ val_dataloader:
 model:
   max_seq_len: 1024
   d_model: 512
-  num_layers: 1
+  num_layers: 4
   num_heads: 8
 
 trainer:
   num_epochs: 1
+  batch_size: 128
   learning_rate: 0.0001
   warmup_percentage: 0.05
   warmup_start_factor: 0.33

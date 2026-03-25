@@ -154,27 +154,66 @@ class DecoderModel(nn.Module):
                 "buffer size (MB)": buffer_size/1024**2
                 }
 
-    def profile_model(self,dummy_input):
+    def profile_model(self,dummy_input_train,dummy_input_val):
         device = "cpu"
         if torch.cuda.is_available():
             device = "cuda"
         elif torch.mps.is_available():
             device = "mps"
         self.to(device)
-        dummy_input = {k:v.to(device) for k,v in dummy_input.items()}
+        dummy_input_train = {k:v.to(device) for k,v in dummy_input_train.items()}
+        dummy_input_val= {k:v.to(device) for k,v in dummy_input_val.items()}
+
+        torch.cuda.reset_peak_memory_stats()
+
+        with torch.no_grad():
+            with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],profile_memory=True,record_shapes=True) as prof:
+                self(**dummy_input_val)
+
+        print("eval peak:", torch.cuda.max_memory_allocated()/1024**3)
+        torch.cuda.reset_peak_memory_stats()
+           
+        val_profile = prof.key_averages().table(sort_by="self_cuda_memory_usage")
+
         with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],profile_memory=True,record_shapes=True) as prof:
-            self(**dummy_input)
-        print(prof.key_averages().table(sort_by="self_cuda_memory_usage"))
+            self(**dummy_input_train)
+
+        print("train peak:", torch.cuda.max_memory_allocated()/1024**3)
+        train_profile = prof.key_averages().table(sort_by="self_cuda_memory_usage")
+
+        return train_profile,val_profile
 
 class DecoderLMHeadModel(DecoderModel):
     def __init__(self, config) -> None:
         super().__init__(config)
         self.head = nn.Linear(self.d_model,self.vocab_size)
 
-    def forward(self,input_ids,attention_mask):
-        hidden_states = super().forward(input_ids,attention_mask)
+    def forward(self,input_ids,attention_mask,labels=None,chunk_size=10,ignore_index=None):
 
-        output = self.head(hidden_states)
+        hidden_states = super().forward(input_ids,attention_mask) # shape is (batch_size,seq_len,d_model)
+        if labels == None: 
+            return self.head(hidden_states).view(-1,self.vocab_size) # shape is (batch_size*seq_len,vocab_size)
+        else: 
+            loss = self.chunked_lm_head(hidden_states.view(-1,self.d_model),labels.view(-1),chunk_size,ignore_index)
+            return loss
 
-        return output.view(-1,self.vocab_size)
+    def chunked_lm_head(self,hidden_states,labels,chunk_size,ignore_index):
+        # TODO: verify this implementation
+        # hidden_states has shape (batch_size*seq_len,d_model)
+        # labels has shape (batch_size*seq_len)
+        num_tokens,_ = hidden_states.shape
+        total_tokens = (labels != ignore_index).sum()
+        total_loss = 0
+        for i in range(0,num_tokens,chunk_size):
+            print("running on chunk i",i)
+            hidden_states_chunk = hidden_states[i:i+chunk_size,:] # has shape (chunk_size,d_model)
+            labels_chunk        = labels[i:i+chunk_size]
+            output_chunk = self.head(hidden_states_chunk) # has shape (chunk_size,vocab_size)
+            loss_chunk = torch.nn.functional.cross_entropy(output_chunk,labels_chunk,ignore_index=ignore_index,reduction="sum")
+            print("loss_chunk : ",loss_chunk)
+            loss = loss_chunk/total_tokens
+            print("loss : ",loss)
+            loss.backward(retain_graph=True)
+            total_loss += loss.item()
 
+        return total_loss
