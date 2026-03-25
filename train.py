@@ -14,7 +14,7 @@ import yaml
 is_profile_run = False 
 
 config_root = Path("~/sudani_lm/configs").expanduser()
-config_name = "pretraining/init_config.yaml"
+config_name = "pretraining/dummy.yaml"
 
 # reading config file
 with open(config_root/config_name,'r') as f:
@@ -28,8 +28,8 @@ train_dataloader = get_data_loader(split="train",**config["train_dataloader"])
 val_dataloader   = get_data_loader(split="val",**config["val_dataloader"])
 
 config["model"]["vocab_size"] = tokenizer.vocab_size
-config["train_dataloader"]["steps"] = len(train_dataloader)
-config["val_dataloader"]["steps"]   = len(val_dataloader)
+config["train_dataloader"]["num_examples"] = len(train_dataloader.dataset)
+config["val_dataloader"]["num_examples"]   = len(val_dataloader.dataset)
 
 print("----------- initializing the model -------------")
 model = DecoderLMHeadModel(config["model"])

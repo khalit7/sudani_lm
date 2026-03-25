@@ -21,7 +21,7 @@ class Trainer:
         self.batch_size = self.config["batch_size"]
 
         self.wandb_run.define_metric("val_loss",summary="min")
-        self.generation_table = wandb.Table(columns=["step","prompt","generation"],log_mode="MUTABLE")
+        self.generation_table = wandb.Table(columns=["step","prompt","temperature","generation"],log_mode="MUTABLE")
         self.generator = Generator(self.model)
 
         self.device = "cpu"
@@ -30,9 +30,8 @@ class Trainer:
         elif torch.mps.is_available():
             self.device = "mps"
 
-        self.checkpoints_root = Path("~/sudani_lm/checkpoints").expanduser()/ self.model.__class__.__name__ / Path(self.wandb_run.name).stem 
+        self.checkpoints_root = Path("~/sudani_lm/checkpoints").expanduser()/ self.wandb_run.project / self.wandb_run.name
         self.checkpoints_root.mkdir(parents=True,exist_ok=True)
-        (self.checkpoints_root/"last_x").mkdir(parents=True,exist_ok=True)
 
     def train(self,train_dataloader,val_dataloader):
 
@@ -87,8 +86,8 @@ class Trainer:
                                         },
                                         step=step)
                     total_loss = 0
-
-
+        # save final model
+        self._save_checkpoint(epoch=epoch,step=step,checkpoint_name="final.pt")
 
     def eval(self,dataloader,epoch,step):
         self.model.eval()
@@ -109,12 +108,13 @@ class Trainer:
             print("old val loss = ", min_val_loss)
             print("new val loss = ", avg_loss)
             self._save_checkpoint(epoch=epoch,step=step,checkpoint_name="best.pt")
-        self._save_checkpoint(epoch=epoch,step=step,checkpoint_name=f"last_x/checkpoint_{step}.pt")
 
-        prompt = "<s>"
-        generated_text = self.generator.generate(prompt=prompt)
-        self.generation_table.add_data(step,prompt,generated_text)
-        self.wandb_run.log({"generation":self.generation_table},step=step)
+        # generate some text and log to wandb
+        for temperature in self.config["generation_temperatures"]:
+            for prompt in self.config["generation_prompts"]:
+                generated_text = self.generator.generate(prompt=prompt,temperature=temperature)
+                self.generation_table.add_data(step,prompt,temperature,generated_text)
+                self.wandb_run.log({"generation":self.generation_table},step=step)
 
         self.model.train()
 
@@ -129,28 +129,3 @@ class Trainer:
         }
 
         torch.save(checkpoint_str,self.checkpoints_root/checkpoint_name)
-
-        # Only clean up routine checkpoints, not the "best" checkpoint
-        if checkpoint_name != "best":
-            self._cleanup_old_checkpoints()
-
-    def _cleanup_old_checkpoints(self):
-        """Delete old routine checkpoints, keeping only the highest n_checkpoints step numbers."""
-        checkpoint_dir = self.checkpoints_root/"last_x"
-        # Get all checkpoint files except "best.pth"
-        checkpoint_files = [
-            f for f in checkpoint_dir.glob("checkpoint_*.pth")
-        ]
-
-        # Sort by step number extracted from filename (highest first)
-        def get_step_number(filepath):
-            # Extract step number from "checkpoint_{step}.pth"
-            stem = filepath.stem  # "checkpoint_{step}"
-            return int(stem.split('_')[1])
-
-        checkpoint_files.sort(key=get_step_number, reverse=True)
-
-        # Delete old checkpoints beyond n_models_to_save
-        for old_checkpoint in checkpoint_files[self.config["n_checkpoints"]:]:
-            print(f"Deleting old checkpoint: {old_checkpoint.name}")
-            old_checkpoint.unlink()
