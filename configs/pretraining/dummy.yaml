@@ -1,5 +1,6 @@
-project: sudani_llm_pretraining
-run: init
+project: dummy_pretraining # this will be used to define the wandb project name
+run: base_dataset_x_layer # this will be used to define the wandb run name
+description: "Pretraining a small LLM on the base dataset with 4 layers and 512 hidden dimensions."
 train_dataloader:
   shuffle: true
   batch_size: 32 
