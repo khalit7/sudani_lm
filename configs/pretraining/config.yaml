@@ -1,6 +1,6 @@
 project: sudani_llm_pretraining # this will be used to define the wandb project name
-run: base_dataset_x_layer # this will be used to define the wandb run name
-description: "Pretraining a small LLM on the base dataset with 4 layers and 512 hidden dimensions."
+run: base_dataset_8_layer # this will be used to define the wandb run name
+description: "Pretraining a small LLM on the base dataset with 8 layers and 512 hidden dimensions."
 train_dataloader:
   shuffle: true
   batch_size: 32 
@@ -18,9 +18,10 @@ val_dataloader:
   persistent_workers: true
 
 model:
+  description: "basic decoder model"
   max_seq_len: 1024
   d_model: 512
-  num_layers: 4
+  num_layers: 8
   num_heads: 8
 
 trainer:

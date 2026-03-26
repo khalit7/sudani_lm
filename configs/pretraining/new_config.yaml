@@ -1,0 +1,42 @@
+run:
+  project_name: "bla bla"
+  run_name: "bla bla"
+  run_description: "bla bla bla"
+
+model:
+  name: "bla bla"
+  config:
+    param1: 0
+    param2: 1
+    param3: 3
+
+train:
+  is_resume_training: False
+  checkpoint_name: False
+
+  optimiser:
+    name: "adam"
+    config:
+      lr: 0
+  scheduler:
+    name: "bla bla"
+    config:
+      param1: 0
+      param2: 1
+  dataloader:
+    name: "blabla"
+    config:
+      param1: 0
+      param2: 1
+
+
+eval:
+  validation:
+    freq: 500
+  mmlu:
+    freq: 1000
+
+monitor:
+  something: 0
+
+

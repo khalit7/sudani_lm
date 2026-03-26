@@ -14,11 +14,14 @@ import yaml
 is_profile_run = False 
 
 config_root = Path("~/sudani_lm/configs").expanduser()
-config_name = "pretraining/dummy.yaml"
+config_name = "pretraining/config.yaml"
 
 # reading config file
 with open(config_root/config_name,'r') as f:
     config = yaml.safe_load(f)
+
+if config["trainer"]["num_epochs"] != 1:
+    raise Exception("Codebase assumes num epochs = 1! I know, stupid, submit a pr if you want to fix or use num_epochs = 1 :)")
 
 print("----------- getting tokenizer -------------")
 tokenizer = get_tokenizer()
@@ -34,6 +37,7 @@ config["val_dataloader"]["num_examples"]   = len(val_dataloader.dataset)
 print("----------- initializing the model -------------")
 model = DecoderLMHeadModel(config["model"])
 model_stats = model.get_model_stats()
+config["model"]["name"] = model.__class__.__name__
 config["model"]["stats"] = model_stats
 if is_profile_run:
     dummy_input_train = {
