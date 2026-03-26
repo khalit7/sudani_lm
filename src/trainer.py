@@ -1,37 +1,34 @@
 from pathlib import Path
 import torch
 from tqdm import tqdm
-from torch.optim import Adam
-from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
-from torch.nn import CrossEntropyLoss
 import wandb
+from factory import Factory
 
-from .generator import Generator
 
-from src.dataset.utils import get_tokenizer
 
 class Trainer:
-    def __init__(self,model,wandb_run,config) -> None:
-        self.model = model
-        self.wandb_run = wandb_run
-        self.config = config
-        tokenizer = get_tokenizer()
-        self.loss_fn = CrossEntropyLoss(ignore_index = tokenizer.pad_token_id )
-        self.optimizer = Adam(self.model.parameters(),lr=config["learning_rate"])
-        self.batch_size = self.config["batch_size"]
+    def __init__(self,config) -> None:
 
-        self.wandb_run.define_metric("val_loss",summary="min")
-        self.generation_table = wandb.Table(columns=["step","prompt","temperature","generation"],log_mode="MUTABLE")
-        self.generator = Generator(self.model)
-
+        # get device
         self.device = "cpu"
         if torch.cuda.is_available():
             self.device = "cuda"
         elif torch.mps.is_available():
             self.device = "mps"
 
+        # setup checkpoint
         self.checkpoints_root = Path("~/sudani_lm/checkpoints").expanduser()/ self.wandb_run.project / self.wandb_run.name
         self.checkpoints_root.mkdir(parents=True,exist_ok=True)
+
+        factory = Factory(config)
+        # get training data
+        self.train_dataloader = factory.get
+        # get model,optimiser, and scheduler
+        self.model        = factory.get_model()
+        self.optimiser    = factory.get_optimiser()
+        self.lr_scheduler = factory.get_scheduler()
+
+
 
     def train(self,train_dataloader,val_dataloader):
 

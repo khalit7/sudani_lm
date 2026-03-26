@@ -1,6 +1,4 @@
-from fsspec.core import conf
 import torch
-from torch.mps import is_available
 import torch.nn as nn
 from torch.profiler import ProfilerActivity,profile,record_function
 
