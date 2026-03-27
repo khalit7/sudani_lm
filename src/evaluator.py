@@ -5,10 +5,11 @@ from tqdm import tqdm
 import wandb
 
 class Evaluator(ABC):
-    def __init__(self,model,device,frequency,dataloader,eval_name) -> None:
+    def __init__(self,model,device,frequency,run_at_0,dataloader,eval_name) -> None:
         self.model = model
         self.device = device
         self.frequency = frequency
+        self.run_at_0 = run_at_0
         self.dataloader = dataloader
         self.eval_name = eval_name
 
@@ -27,13 +28,13 @@ class Evaluator(ABC):
 class ValidationEvaluator(Evaluator):
 
     def eval(self,wandb_run,step,ignore_index):
-        loss_fn = torch.nn.functional.cross_entropy(ignore_index=ignore_index)
+        loss_fn = torch.nn.functional.cross_entropy
         total_loss = 0
         for X,Y in tqdm(self.dataloader):
             X = {k:v.to(self.device) for k,v in X.items()}
-            Y = Y.to(self.device)
+            Y = Y.to(self.device).flatten()
             output = self.model(**X)
-            loss   = loss_fn(output,Y) 
+            loss   = loss_fn(output,Y, ignore_index=ignore_index)
             total_loss += loss.item()
         avg_loss = total_loss/len(self.dataloader)
         wandb_run.log({"val_loss":avg_loss},step=step)
@@ -46,8 +47,8 @@ class ValidationEvaluator(Evaluator):
 
 class GenerationEvaluator(Evaluator):
 
-    def __init__(self, model, device, frequency, dataloader, eval_name,prompts,temperatures,max_tokens=50):
-        super().__init__(model, device, frequency, dataloader, eval_name)
+    def __init__(self, model, device, frequency,run_at_0, dataloader, eval_name,prompts,temperatures,max_tokens=50):
+        super().__init__(model, device, frequency,run_at_0, dataloader, eval_name)
         self.prompts = prompts
         self.temperatures = temperatures
         self.max_tokens = max_tokens

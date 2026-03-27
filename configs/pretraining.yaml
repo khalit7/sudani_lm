@@ -45,6 +45,7 @@ train:
 eval:
   validation:
     freq: 500
+    run_at_0: True
     dataloader:
       name: "arabic"
       split: "val"
@@ -55,20 +56,21 @@ eval:
         prefetch_factor: 8
         pin_memory: True
         persistent_workers: True
-  mmlu:
-      freq: 1000
-      dataloader:
-        name: "mmlu"
-        split: "All"
-        config:
-          batch_size: 128
-          shuffle: False
-          num_workers: 12
-          prefetch_factor: 8
-          pin_memory: True
-          persistent_workers: True
-
+  # mmlu:
+  #     freq: 1000
+  #     dataloader:
+  #       name: "mmlu"
+  #       split: "All"
+  #       config:
+  #         batch_size: 128
+  #         shuffle: False
+  #         num_workers: 12
+  #         prefetch_factor: 8
+  #         pin_memory: True
+  #         persistent_workers: True
+  #
   generation:
     freq: 500
+    run_at_0: False
     prompts: ["<s>"]
     temperatures: [0,0.5,1]

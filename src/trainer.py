@@ -2,7 +2,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 import wandb
-from factory import Factory
+from src.factory import Factory
 from data.src.tokenizer.utils import get_tokenizer
 
 
@@ -10,12 +10,14 @@ from data.src.tokenizer.utils import get_tokenizer
 class Trainer:
     def __init__(self,config) -> None:
 
-        self.effective_batch_size = config["effective_batch_size"]
-        self.num_epochs           = config["num_epochs"]
+        self.effective_batch_size = config["train"]["effective_batch_size"]
+        self.num_epochs           = config["train"]["num_epochs"]
 
         # TODO: Improved the tokenizer and loss function usage
         self.tokenizer = get_tokenizer()
         self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
+
+        config["model"]["config"]["vocab_size"] = len(self.tokenizer)
 
         # get device
         self.device = "cpu"
@@ -27,6 +29,7 @@ class Trainer:
         factory = Factory(config)
         # get training data
         self.train_dataloader = factory.get_dataloader(config["train"]["dataloader"])
+        assert self.train_dataloader is not None
         if self.effective_batch_size%self.train_dataloader.batch_size!=0:
             raise Exception(f"cannot do gradient accumulation with effective batch size  = {self.effective_batch_size} and train dataloader batch size = {self.train_dataloader.batch_size}")
         
@@ -36,12 +39,19 @@ class Trainer:
         
         # get model,optimiser, and scheduler
         self.model        = factory.get_model()
-        self.optimiser    = factory.get_optimiser()
-        self.lr_scheduler = factory.get_scheduler(self.total_training_steps)
+        self.optimiser    = factory.get_optimiser(self.model.parameters())
+        self.lr_scheduler = factory.get_scheduler(self.total_training_steps,self.optimiser)
 
         # get evaluators
         self.evals = factory.get_evals(self.model,self.device)
 
+
+        # add info to config
+        config["model"]["stats"] = self.model.get_model_stats()
+        config["train"]["dataloader"]["num_samples"] = len(self.train_dataloader.dataset)
+        for ev in self.evals:
+            if ev.dataloader is not None:
+                config["eval"][f"{ev.eval_name}_dataloader_num_samples"] = len(ev.dataloader.dataset)
         # wandb run
         self.wandb_run = wandb.init(
             project=config["run"]["project_name"],
@@ -62,6 +72,7 @@ class Trainer:
         self.model.train()
 
         print("Starting training on device = ",self.device)
+        self.run_evals(epoch=0,step=0)
 
         total_loss = 0
         for epoch in range(self.num_epochs):
@@ -91,23 +102,36 @@ class Trainer:
                                         step=num_grad_updates)
                     total_loss = 0
 
-                # check if we need to run evals
-                for eval in self.evals:
-                    if num_grad_updates % eval.frequency == 0:
-                        print(f"Running Evaluation: {eval.eval_name}")
-                        params = {
-                            "wandb_run":self.wandb_run,
-                            "step":num_grad_updates
-                            }
-                        if eval.eval_name == "validation":
-                            params.update({"ignore_index":self.tokenizer.pad_token_id})
+                    self.run_evals(epoch=epoch,step=num_grad_updates)
 
-                        checkpoint_name = eval.run_eval(**params)
-                        if checkpoint_name is not None:
-                            self._save_checkpoint(epoch=epoch,step=acc_steps//self.grad_acc_every,checkpoint_name=checkpoint_name)
+    
 
+    
         # save final model
-        self._save_checkpoint(epoch=epoch,step=acc_steps//self.grad_acc_every,checkpoint_name="final.pt")
+        self._save_checkpoint(epoch=epoch,step=num_grad_updates,checkpoint_name="final.pt")
+
+    def run_evals(self,epoch,step,):
+        # check if we need to run evals
+        for eval in self.evals:
+            if step == 0:
+                will_run_eval = eval.run_at_0
+            else:
+                will_run_eval = step % eval.frequency == 0
+
+            if will_run_eval:
+                print(f"Running Evaluation: {eval.eval_name}")
+                params = {
+                    "wandb_run":self.wandb_run,
+                    "step": step
+                    }
+                if eval.eval_name == "validation":
+                    params.update({"ignore_index":self.tokenizer.pad_token_id})
+                if eval.eval_name == "generation":
+                    params.update({"tokenizer":self.tokenizer})
+
+                checkpoint_name = eval.run_eval(**params)
+                if checkpoint_name is not None:
+                    self._save_checkpoint(epoch=epoch,step=step,checkpoint_name=checkpoint_name)
 
     def _save_checkpoint(self,epoch,step,checkpoint_name):
         checkpoint_str = \
@@ -115,7 +139,7 @@ class Trainer:
         "epoch":epoch,
         "step":step,
         "model_state_dict":self.model.state_dict(),
-        "optimiser_state_dict":self.optimizer.state_dict(),
+        "optimiser_state_dict":self.optimiser.state_dict(),
         "lr_scheduler_state_dict":self.lr_scheduler.state_dict(),
         }
 

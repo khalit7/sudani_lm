@@ -1,9 +1,10 @@
+import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
 
-from evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
-from models.decoder import DecoderLMHeadModel
+from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
+from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule
 
 
@@ -21,17 +22,16 @@ class Factory:
         else:
             raise Exception("Model name not recognised")
 
-    def get_optimiser(self) -> torch.optim.Optimiser :
+    def get_optimiser(self,model_parameters) -> torch.optim.Optimizer :
 
         optimiser_name   = self.config["train"]["optimiser"]["name"]
         optimiser_config = self.config["train"]["optimiser"]["config"]
         if optimiser_name == "adam":
-            return Adam(optimiser_config)
+            return Adam(model_parameters,**optimiser_config)
         else:
             raise Exception("Optimiser name not recognised")
 
-    def get_scheduler(self,total_training_steps) -> torch.optim._LRScheduler:
-       optimiser = self.get_optimiser()
+    def get_scheduler(self,total_training_steps,optimiser):
 
        scheduler_name   = self.config["train"]["scheduler"]["name"]
        scheduler_config = self.config["train"]["scheduler"]["config"]
@@ -66,23 +66,25 @@ class Factory:
         
 
     def _construct_eval(self,eval_name,eval_config,model,device) -> Evaluator:
-        frequency = eval_config["frequency"]
+        frequency = eval_config["freq"]
+        run_at_0  = eval_config["run_at_0"]
         dataloader_config = eval_config.get("dataloader")
         dataloader = self.get_dataloader(dataloader_config)
         if eval_name == "validation":
-            return ValidationEvaluator(model,device,frequency,dataloader,eval_name)
+            return ValidationEvaluator(model,device,frequency,run_at_0,dataloader,eval_name)
         elif eval_name == "generation":
             return GenerationEvaluator(
                 model,
                 device,
                 frequency,
+                run_at_0,
                 dataloader,
                 eval_name,
                 prompts=eval_config["prompts"],
                 temperatures=eval_config["temperatures"],
                 max_tokens=eval_config.get("max_tokens",50))
         elif eval_name == "mmlu":
-            return MMLUEvaluator(model,device,frequency,dataloader,eval_name)
+            return MMLUEvaluator(model,device,frequency,run_at_0,dataloader,eval_name)
         else:
             raise Exception("eval name not recognised")
         

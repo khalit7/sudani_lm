@@ -1,7 +1,7 @@
 from datasets import load 
-from torch.utils.data import Dataset,DataLoader
+from torch.utils.data import Dataset
 from pathlib import Path
-from base import BaseDatasetModule
+from src.dataset.base import BaseDatasetModule
 
 from data.src.tokenizer.utils import get_tokenizer
 
@@ -34,23 +34,23 @@ class ArabicPretrainingDataset(Dataset):
 
 class ArabicPretrainingDatasetModule(BaseDatasetModule):
 
-    def __int__(self):
+    def __init__(self):
         self.tokenizer = get_tokenizer()
 
     def build_dataset(self,split):
         data_path = data_root/"arab"/"processed"/split
         dataset = load.load_from_disk(data_path)
-        return ArabicPretrainingDataset(dataset)
+        return ArabicPretrainingDataset(dataset,self.tokenizer)
 
     def colllate_fn(self,batch:list[tuple[str,str]]):
-        X = self.tokenizer(\
+        X = self.tokenizer(
             [x[0] for x in batch], 
             padding=True,
             truncation=True,
             max_length=1024,
             return_tensors="pt"
             )
-        Y = self.tokenizer(\
+        Y = self.tokenizer(
             [x[1] for x in batch], 
             padding=True,
             truncation=True,
