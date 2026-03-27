@@ -1,16 +1,18 @@
 from datasets import load 
 from torch.utils.data import Dataset,DataLoader
 from pathlib import Path
-from src.dataset import utils
+from base import BaseDatasetModule
+
+from data.src.tokenizer.utils import get_tokenizer
 
 data_root = Path("~/sudani_lm/data").expanduser()
 
 
 class ArabicPretrainingDataset(Dataset):
 
-    def __init__(self,hf_dataset) -> None:
-        self.dataset = hf_dataset
-        self.tokenzier =utils.get_tokenizer()
+    def __init__(self,dataset,tokenizer) -> None:
+        self.dataset = dataset
+        self.tokenzier = tokenizer
 
 
     def __len__(self):
@@ -30,30 +32,29 @@ class ArabicPretrainingDataset(Dataset):
 
 
 
-def collate_fn(batch:list[tuple[str,str]]):
-    tokenizer = utils.get_tokenizer()
-    X = tokenizer(\
-        [x[0] for x in batch], 
-        padding=True,
-        truncation=True,
-        max_length=1024,
-        return_tensors="pt"
-        )
-    Y = tokenizer(\
-        [x[1] for x in batch], 
-        padding=True,
-        truncation=True,
-        max_length=1024,
-        return_tensors="pt"
-        )
-    return X,Y["input_ids"]
+class ArabicPretrainingDatasetModule(BaseDatasetModule):
 
+    def __int__(self):
+        self.tokenizer = get_tokenizer()
 
-def get_data_loader(split,**kwargs):
-    data_path = data_root/"arab"/"processed"/split
+    def build_dataset(self,split):
+        data_path = data_root/"arab"/"processed"/split
+        dataset = load.load_from_disk(data_path)
+        return ArabicPretrainingDataset(dataset)
 
-    dataset = load.load_from_disk(data_path)
-    dataset = ArabicPretrainingDataset(dataset)
-    return DataLoader(dataset,collate_fn=collate_fn,**kwargs)
-
-
+    def colllate_fn(self,batch:list[tuple[str,str]]):
+        X = self.tokenizer(\
+            [x[0] for x in batch], 
+            padding=True,
+            truncation=True,
+            max_length=1024,
+            return_tensors="pt"
+            )
+        Y = self.tokenizer(\
+            [x[1] for x in batch], 
+            padding=True,
+            truncation=True,
+            max_length=1024,
+            return_tensors="pt"
+            )
+        return X,Y["input_ids"]

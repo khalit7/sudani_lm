@@ -3,11 +3,19 @@ import torch
 from tqdm import tqdm
 import wandb
 from factory import Factory
+from data.src.tokenizer.utils import get_tokenizer
 
 
 
 class Trainer:
     def __init__(self,config) -> None:
+
+        self.effective_batch_size = config["effective_batch_size"]
+        self.num_epochs           = config["num_epochs"]
+
+        # TODO: Improved the tokenizer and loss function usage
+        self.tokenizer = get_tokenizer()
+        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
 
         # get device
         self.device = "cpu"
@@ -16,104 +24,90 @@ class Trainer:
         elif torch.mps.is_available():
             self.device = "mps"
 
+        factory = Factory(config)
+        # get training data
+        self.train_dataloader = factory.get_dataloader(config["train"]["dataloader"])
+        if self.effective_batch_size%self.train_dataloader.batch_size!=0:
+            raise Exception(f"cannot do gradient accumulation with effective batch size  = {self.effective_batch_size} and train dataloader batch size = {self.train_dataloader.batch_size}")
+        
+        self.train_dataloader_num_steps = len(self.train_dataloader)
+        self.grad_acc_every = self.effective_batch_size//self.train_dataloader.batch_size
+        self.total_training_steps = self.train_dataloader_num_steps//self.grad_acc_every
+        
+        # get model,optimiser, and scheduler
+        self.model        = factory.get_model()
+        self.optimiser    = factory.get_optimiser()
+        self.lr_scheduler = factory.get_scheduler(self.total_training_steps)
+
+        # get evaluators
+        self.evals = factory.get_evals(self.model,self.device)
+
+        # wandb run
+        self.wandb_run = wandb.init(
+            project=config["run"]["project_name"],
+            name=config["run"]["run_name"],
+            config=config
+        )
+        self.wandb_run.define_metric("val_loss",summary="min")
+
         # setup checkpoint
         self.checkpoints_root = Path("~/sudani_lm/checkpoints").expanduser()/ self.wandb_run.project / self.wandb_run.name
         self.checkpoints_root.mkdir(parents=True,exist_ok=True)
 
-        factory = Factory(config)
-        # get training data
-        self.train_dataloader = factory.get
-        # get model,optimiser, and scheduler
-        self.model        = factory.get_model()
-        self.optimiser    = factory.get_optimiser()
-        self.lr_scheduler = factory.get_scheduler()
 
 
-
-    def train(self,train_dataloader,val_dataloader):
-
-        if self.batch_size % train_dataloader.batch_size != 0 :
-            raise Exception("trainer batch size and train dataloader batch size are not compatible")
-        grad_acc_target_steps = self.batch_size//train_dataloader.batch_size
- 
-        total_steps = (len(train_dataloader)+grad_acc_target_steps-1)//grad_acc_target_steps
-        warmup_steps = int( total_steps*self.config["warmup_percentage"] )
-
-        linear_lr_scheduler = LinearLR(self.optimizer,start_factor=self.config["warmup_start_factor"],end_factor=1,total_iters=warmup_steps)
-        cosine_lr_scheduler = CosineAnnealingLR(self.optimizer,T_max=total_steps-warmup_steps)
-
-        self.lr_scheduler = SequentialLR(self.optimizer,[linear_lr_scheduler,cosine_lr_scheduler],milestones=[warmup_steps])
+    def train(self):
 
         self.model.to(self.device)
         self.model.train()
 
         print("Starting training on device = ",self.device)
 
-        grad_acc_current_steps = 0
-        step = 0
         total_loss = 0
-        for epoch in range(self.config["num_epochs"]):
-            for X,Y in tqdm(train_dataloader):
-
-                # run evaluation
-                if step%self.config["eval_every"] == 0 and grad_acc_current_steps == 0:
-                    self.eval(val_dataloader,epoch,step)
+        for epoch in range(self.num_epochs):
+            for acc_steps,(X,Y) in enumerate(tqdm(self.train_dataloader),1):
 
                 # run training step with grad accumulation
                 X = {k:v.to(self.device) for k,v in X.items() }
                 Y = Y.flatten().to(self.device)
                 output = self.model(**X)
                 loss = self.loss_fn(output,Y)
-                loss = loss/grad_acc_target_steps
+                loss = loss/self.grad_acc_every
                 loss.backward()
 
                 total_loss += loss.detach().item()
-                grad_acc_current_steps += 1
+                num_grad_updates = acc_steps//self.grad_acc_every
 
-                if grad_acc_current_steps == grad_acc_target_steps :
-                    step += 1
-                    grad_acc_current_steps = 0
-                    self.optimizer.step()
+                # check if we need to update weights
+                if acc_steps % self.grad_acc_every == 0 :
+                    self.optimiser.step()
                     self.lr_scheduler.step()
-                    self.optimizer.zero_grad()
+                    self.optimiser.zero_grad()
                     self.wandb_run.log(
                                         {
                     "train_loss":total_loss,
-                    "learning_rate":self.optimizer.param_groups[0]["lr"]
+                    "learning_rate":self.optimiser.param_groups[0]["lr"]
                                         },
-                                        step=step)
+                                        step=num_grad_updates)
                     total_loss = 0
+
+                # check if we need to run evals
+                for eval in self.evals:
+                    if num_grad_updates % eval.frequency == 0:
+                        print(f"Running Evaluation: {eval.eval_name}")
+                        params = {
+                            "wandb_run":self.wandb_run,
+                            "step":num_grad_updates
+                            }
+                        if eval.eval_name == "validation":
+                            params.update({"ignore_index":self.tokenizer.pad_token_id})
+
+                        checkpoint_name = eval.run_eval(**params)
+                        if checkpoint_name is not None:
+                            self._save_checkpoint(epoch=epoch,step=acc_steps//self.grad_acc_every,checkpoint_name=checkpoint_name)
+
         # save final model
-        self._save_checkpoint(epoch=epoch,step=step,checkpoint_name="final.pt")
-
-    def eval(self,dataloader,epoch,step):
-        self.model.eval()
-        total_loss = 0
-        with torch.no_grad():
-            for X,Y in tqdm(dataloader):
-                X = {k:v.to(self.device) for k,v in X.items()}
-                Y = Y.flatten().to(self.device)
-                output = self.model(**X)
-                loss   = self.loss_fn(output,Y) 
-                total_loss += loss.item()
-        avg_loss = total_loss/len(dataloader)
-        self.wandb_run.log({"val_loss":avg_loss},step=step)
-
-        min_val_loss = self.wandb_run.summary.get("val_loss",{}).get("min",float("inf"))
-        if avg_loss < min_val_loss:
-            print(f"found new best model!")
-            print("old val loss = ", min_val_loss)
-            print("new val loss = ", avg_loss)
-            self._save_checkpoint(epoch=epoch,step=step,checkpoint_name="best.pt")
-
-        # generate some text and log to wandb
-        for temperature in self.config["generation_temperatures"]:
-            for prompt in self.config["generation_prompts"]:
-                generated_text = self.generator.generate(prompt=prompt,temperature=temperature)
-                self.generation_table.add_data(step,prompt,temperature,generated_text)
-                self.wandb_run.log({"generation":self.generation_table},step=step)
-
-        self.model.train()
+        self._save_checkpoint(epoch=epoch,step=acc_steps//self.grad_acc_every,checkpoint_name="final.pt")
 
     def _save_checkpoint(self,epoch,step,checkpoint_name):
         checkpoint_str = \

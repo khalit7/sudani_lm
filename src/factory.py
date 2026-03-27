@@ -2,7 +2,9 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
 
+from evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from models.decoder import DecoderLMHeadModel
+from src.dataset import ArabicPretrainingDatasetModule
 
 
 class Factory:
@@ -19,7 +21,7 @@ class Factory:
         else:
             raise Exception("Model name not recognised")
 
-    def get_optimiser(self):
+    def get_optimiser(self) -> torch.optim.Optimiser :
 
         optimiser_name   = self.config["train"]["optimiser"]["name"]
         optimiser_config = self.config["train"]["optimiser"]["config"]
@@ -28,7 +30,7 @@ class Factory:
         else:
             raise Exception("Optimiser name not recognised")
 
-    def get_scheduler(self,total_training_steps):
+    def get_scheduler(self,total_training_steps) -> torch.optim._LRScheduler:
        optimiser = self.get_optimiser()
 
        scheduler_name   = self.config["train"]["scheduler"]["name"]
@@ -36,7 +38,7 @@ class Factory:
 
        if scheduler_name == "warmup_cos":
           warmup_percentage  = scheduler_config["warmup_percentage"]
-          warmup_start_factor = scheduler_configp["warmup_start_factor"]
+          warmup_start_factor = scheduler_config["warmup_start_factor"]
 
           warmup_steps = int(total_training_steps*warmup_percentage)
           remaining_steps = total_training_steps - warmup_steps
@@ -48,3 +50,48 @@ class Factory:
 
        else:
            raise Exception("scheduler name not recognised")
+    
+    def get_dataloader(self,dataloader_config):
+        if dataloader_config is None:
+            return None
+        dataloader_name   = dataloader_config["name"]
+        split             = dataloader_config["split"]
+        dataloader_params = dataloader_config["config"]
+
+        if dataloader_name == "arabic":
+            dataset = ArabicPretrainingDatasetModule()
+            return dataset.build_dataloader(split,**dataloader_params)
+        else:
+            raise Exception("dataloader name not recognised")
+        
+
+    def _construct_eval(self,eval_name,eval_config,model,device) -> Evaluator:
+        frequency = eval_config["frequency"]
+        dataloader_config = eval_config.get("dataloader")
+        dataloader = self.get_dataloader(dataloader_config)
+        if eval_name == "validation":
+            return ValidationEvaluator(model,device,frequency,dataloader,eval_name)
+        elif eval_name == "generation":
+            return GenerationEvaluator(
+                model,
+                device,
+                frequency,
+                dataloader,
+                eval_name,
+                prompts=eval_config["prompts"],
+                temperatures=eval_config["temperatures"],
+                max_tokens=eval_config.get("max_tokens",50))
+        elif eval_name == "mmlu":
+            return MMLUEvaluator(model,device,frequency,dataloader,eval_name)
+        else:
+            raise Exception("eval name not recognised")
+        
+    def get_evals(self,model,device) -> list[Evaluator]:
+        eval_dict = self.config["eval"]
+        evals = []
+        for eval_name,eval_config in eval_dict.items():
+            evals.append(self._construct_eval(eval_name,eval_config,model,device))
+        return evals
+
+            
+        

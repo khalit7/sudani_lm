@@ -30,7 +30,8 @@ train:
       warmup_start_factor: 0.33
 
   dataloader:
-    name: "arabic_train"
+    name: "arabic"
+    split: "train"
     config:
       batch_size: 32
       shuffle: True
@@ -45,7 +46,8 @@ eval:
   validation:
     freq: 500
     dataloader:
-      name: "arabic_val"
+      name: "arabic"
+      split: "val"
       config:
         batch_size: 128
         shuffle: False
@@ -53,20 +55,19 @@ eval:
         prefetch_factor: 8
         pin_memory: True
         persistent_workers: True
- mmlu:
-    freq: 1000
-    dataloader:
-      name: "mmlu"
-      config:
-        batch_size: 128
-        shuffle: False
-        num_workers: 12
-        prefetch_factor: 8
-        pin_memory: True
-        persistent_workers: True
+  mmlu:
+      freq: 1000
+      dataloader:
+        name: "mmlu"
+        split: "All"
+        config:
+          batch_size: 128
+          shuffle: False
+          num_workers: 12
+          prefetch_factor: 8
+          pin_memory: True
+          persistent_workers: True
 
-
-monitor:
   generation:
     freq: 500
     prompts: ["<s>"]
