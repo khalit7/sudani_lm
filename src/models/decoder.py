@@ -1,6 +1,4 @@
-from fsspec.core import conf
 import torch
-from torch.mps import is_available
 import torch.nn as nn
 from torch.profiler import ProfilerActivity,profile,record_function
 
@@ -192,7 +190,7 @@ class DecoderLMHeadModel(DecoderModel):
 
         hidden_states = super().forward(input_ids,attention_mask) # shape is (batch_size,seq_len,d_model)
         if labels == None: 
-            return self.head(hidden_states).view(-1,self.vocab_size) # shape is (batch_size*seq_len,vocab_size)
+            return self.head(hidden_states)# shape is (batch_size,seq_len,vocab_size)
         else: 
             loss = self.chunked_lm_head(hidden_states.view(-1,self.d_model),labels.view(-1),chunk_size,ignore_index)
             return loss

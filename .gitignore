@@ -14,3 +14,6 @@ data/**/*
 
 # Exception: Keep any file with "_sample" in the name anywhere inside data/
 !data/**/*_sample*
+
+# Exception: keep all files in data/src/
+!data/src/**

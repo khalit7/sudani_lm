@@ -1,0 +1,77 @@
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "base_dataset_4_layer_mmlu"
+  run_description: "bla bla bla"
+
+model:
+  name: "init_decoder"
+  config:
+    is_resume_training: False
+    checkpoint_name: null
+
+    max_seq_len: 1024
+    d_model: 512
+    num_layers: 4
+    num_heads: 8
+
+train:
+  num_epochs: 1
+  effective_batch_size: 128
+
+  optimiser:
+    name: "adam"
+    config:
+      lr: 0.0001
+
+  scheduler:
+    name: "warmup_cos"
+    config:
+      warmup_percentage: 0.05
+      warmup_start_factor: 0.33
+
+  dataloader:
+    name: "arabic"
+    split: "train"
+    config:
+      batch_size: 64
+      shuffle: True
+      num_workers: 12
+      prefetch_factor: 8
+      pin_memory: True
+      persistent_workers: False
+
+
+
+eval:
+  validation:
+    freq: 500
+    run_at_0: True 
+    dataloader:
+      name: "arabic"
+      split: "val"
+      config:
+        batch_size: 128
+        shuffle: False
+        num_workers: 12
+        prefetch_factor: 8
+        pin_memory: True
+        persistent_workers: True
+  mmlu:
+      freq: 500
+      run_at_0: True 
+      dataloader:
+        name: "mmlu"
+        split: "test"
+        config:
+          batch_size: 128
+          shuffle: False
+          num_workers: 12
+          prefetch_factor: 8
+          pin_memory: True
+          persistent_workers: True 
+
+  generation:
+    freq: 1000 
+    run_at_0: False
+    prompts: ["<s>"]
+    temperatures: [0,0.5,1,2]
