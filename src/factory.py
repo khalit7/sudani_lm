@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
+from torch.utils import data
 
 from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
-from src.dataset import ArabicPretrainingDatasetModule
+from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
 
 
 class Factory:
@@ -60,6 +61,9 @@ class Factory:
 
         if dataloader_name == "arabic":
             dataset = ArabicPretrainingDatasetModule()
+            return dataset.build_dataloader(split,**dataloader_params)
+        elif dataloader_name == "mmlu":
+            dataset = ArabicMMLUDatasetModule()
             return dataset.build_dataloader(split,**dataloader_params)
         else:
             raise Exception("dataloader name not recognised")

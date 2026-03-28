@@ -17,7 +17,8 @@ class Trainer:
         self.tokenizer = get_tokenizer()
         self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
 
-        config["model"]["config"]["vocab_size"] = len(self.tokenizer)
+        self.vocab_size = len(self.tokenizer)
+        config["model"]["config"]["vocab_size"] = self.vocab_size 
 
         # get device
         self.device = "cpu"
@@ -82,7 +83,7 @@ class Trainer:
                 X = {k:v.to(self.device) for k,v in X.items() }
                 Y = Y.flatten().to(self.device)
                 output = self.model(**X)
-                loss = self.loss_fn(output,Y)
+                loss = self.loss_fn(output.view(-1,self.vocab_size),Y)
                 loss = loss/self.grad_acc_every
                 loss.backward()
 

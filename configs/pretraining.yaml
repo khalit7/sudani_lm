@@ -1,6 +1,6 @@
 run:
   project_name: "sudani_llm_pretraining"
-  run_name: "new_setup"
+  run_name: "base_dataset_4_layer_mmlu"
   run_description: "bla bla bla"
 
 model:
@@ -11,7 +11,7 @@ model:
 
     max_seq_len: 1024
     d_model: 512
-    num_layers: 1
+    num_layers: 4
     num_heads: 8
 
 train:
@@ -33,7 +33,7 @@ train:
     name: "arabic"
     split: "train"
     config:
-      batch_size: 32
+      batch_size: 64
       shuffle: True
       num_workers: 12
       prefetch_factor: 8
@@ -45,7 +45,7 @@ train:
 eval:
   validation:
     freq: 500
-    run_at_0: True
+    run_at_0: True 
     dataloader:
       name: "arabic"
       split: "val"
@@ -56,21 +56,22 @@ eval:
         prefetch_factor: 8
         pin_memory: True
         persistent_workers: True
-  # mmlu:
-  #     freq: 1000
-  #     dataloader:
-  #       name: "mmlu"
-  #       split: "All"
-  #       config:
-  #         batch_size: 128
-  #         shuffle: False
-  #         num_workers: 12
-  #         prefetch_factor: 8
-  #         pin_memory: True
-  #         persistent_workers: True
-  #
+  mmlu:
+      freq: 500
+      run_at_0: True 
+      dataloader:
+        name: "mmlu"
+        split: "test"
+        config:
+          batch_size: 128
+          shuffle: False
+          num_workers: 12
+          prefetch_factor: 8
+          pin_memory: True
+          persistent_workers: True 
+
   generation:
-    freq: 500
+    freq: 1000 
     run_at_0: False
     prompts: ["<s>"]
-    temperatures: [0,0.5,1]
+    temperatures: [0,0.5,1,2]

@@ -4,6 +4,8 @@ import torch
 from tqdm import tqdm
 import wandb
 
+from sklearn.metrics import classification_report
+
 class Evaluator(ABC):
     def __init__(self,model,device,frequency,run_at_0,dataloader,eval_name) -> None:
         self.model = model
@@ -34,7 +36,7 @@ class ValidationEvaluator(Evaluator):
             X = {k:v.to(self.device) for k,v in X.items()}
             Y = Y.to(self.device).flatten()
             output = self.model(**X)
-            loss   = loss_fn(output,Y, ignore_index=ignore_index)
+            loss   = loss_fn(output.view(X["input_ids"].shape[0]*X["input_ids"].shape[1],-1),Y, ignore_index=ignore_index)
             total_loss += loss.item()
         avg_loss = total_loss/len(self.dataloader)
         wandb_run.log({"val_loss":avg_loss},step=step)
@@ -69,7 +71,7 @@ class GenerationEvaluator(Evaluator):
         with torch.no_grad():
             while input_ids.shape[-1] < max_tokens and input_ids[...,-1].item() != tokenizer.eos_token_id:
                 logits = self.model(**{"input_ids":input_ids ,"attention_mask":torch.ones(input_ids.shape,device=self.device)})
-                logits = logits[-1,...].flatten() # get the logits of only the final token
+                logits = logits[-1,-1,...].flatten() # get the logits of only the final token
                 if temperature == 0:
                     token_id = logits.argmax().unsqueeze(0)
                 else:
@@ -82,5 +84,27 @@ class GenerationEvaluator(Evaluator):
 
 class MMLUEvaluator(Evaluator):
 
-    def eval(self,wandb_run,step,**kwargs):
-        pass
+    def eval(self,wandb_run,step):
+
+        num_correct = 0
+        for X,Y in tqdm(self.dataloader):
+            X = { k:v.to(self.device) for k,v in X.items()}
+            output = self.model(**X)# has shape (batch_size,seq_len,vocab_size)
+            next_token_logits = output[:,-1,:].squeeze() # has shape (batch_size,vocab_size)
+            filtered_logits = next_token_logits[:,self.dataloader.dataset.options_ids] # has shape (batch_size,num_options)
+
+        clf_report = classification_report( Y, filtered_logits.argmax(dim=-1).cpu().numpy(), output_dict=True,zero_division=0)
+         
+        wandb_run.log( {
+            "mmlu_acc":clf_report["accuracy"],
+            "mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
+            "mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
+            "mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"],
+            "mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
+            "mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
+            "mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"]
+
+
+
+
+            },step=step)
