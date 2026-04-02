@@ -86,23 +86,26 @@ class MMLUEvaluator(Evaluator):
 
     def eval(self,wandb_run,step):
 
-        num_correct = 0
+        y_pred = []
+        y_true = []
         for X,Y in tqdm(self.dataloader):
             X = { k:v.to(self.device) for k,v in X.items()}
             output = self.model(**X)# has shape (batch_size,seq_len,vocab_size)
-            next_token_logits = output[:,-1,:].squeeze() # has shape (batch_size,vocab_size)
+            next_token_logits = output[:,-1,:]# has shape (batch_size,vocab_size)
             filtered_logits = next_token_logits[:,self.dataloader.dataset.options_ids] # has shape (batch_size,num_options)
+            y_pred.extend( filtered_logits.argmax(dim=-1).cpu().tolist())
+            y_true.extend(Y)
 
-        clf_report = classification_report( Y, filtered_logits.argmax(dim=-1).cpu().numpy(), output_dict=True,zero_division=0)
+        clf_report = classification_report(y_true,y_pred,output_dict=True,zero_division=0.0) 
          
         wandb_run.log( {
             "mmlu_acc":clf_report["accuracy"],
             "mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
             "mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
             "mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"],
-            "mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
-            "mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
-            "mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"]
+            "mmlu_macro_precision":clf_report["macro avg"]["precision"],
+            "mmlu_macro_recall"   :clf_report["macro avg"]["recall"],
+            "mmlu_macro_f1"       :clf_report["macro avg"]["f1-score"]
 
 
 
