@@ -215,3 +215,28 @@ class DecoderLMHeadModel(DecoderModel):
             total_loss += loss.item()
 
         return total_loss
+
+    def calc_grad_norms(self):
+        grad_norms = {}
+        total_sq_norm = 0.0
+        
+        # Track per-layer norms
+        for i, layer in enumerate(self.decoder_layers, 1):
+            # Calculate sum of squares for this layer
+            layer_sq_norm = sum(p.grad.detach().pow(2).sum().item() 
+                                for p in layer.parameters() if p.grad is not None)
+            
+            grad_norms[f"layer{i}_grad"] = layer_sq_norm ** 0.5
+            total_sq_norm += layer_sq_norm
+    
+        # Handle the head separately
+        head_sq_norm = sum(p.grad.detach().pow(2).sum().item() 
+                           for p in self.head.parameters() if p.grad is not None)
+        
+        grad_norms["head_grad"] = head_sq_norm ** 0.5
+        total_sq_norm += head_sq_norm
+    
+        # Final global norm
+        grad_norms["model_grad"] = total_sq_norm ** 0.5
+        
+        return grad_norms

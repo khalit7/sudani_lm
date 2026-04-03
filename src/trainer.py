@@ -12,6 +12,7 @@ class Trainer:
 
         self.effective_batch_size = config["train"]["effective_batch_size"]
         self.num_epochs           = config["train"]["num_epochs"]
+        self.grad_norm_freq       = config["monitor"]["grad_norm"]["freq"]
 
         # TODO: Improved the tokenizer and loss function usage
         self.tokenizer = get_tokenizer()
@@ -59,7 +60,7 @@ class Trainer:
             name=config["run"]["run_name"],
             config=config
         )
-        self.wandb_run.define_metric("val_loss",summary="min")
+        self.wandb_run.define_metric("loss/val_loss",summary="min")
 
         # setup checkpoint
         self.checkpoints_root = Path("~/sudani_lm/checkpoints").expanduser()/ self.wandb_run.project / self.wandb_run.name
@@ -94,10 +95,11 @@ class Trainer:
                 if acc_steps % self.grad_acc_every == 0 :
                     self.optimiser.step()
                     self.lr_scheduler.step()
+                    self.log_grad_norm(epoch=epoch,step=num_grad_updates)
                     self.optimiser.zero_grad()
                     self.wandb_run.log(
                                         {
-                    "train_loss":total_loss,
+                    "loss/train_loss":total_loss,
                     "learning_rate":self.optimiser.param_groups[0]["lr"]
                                         },
                                         step=num_grad_updates)
@@ -110,6 +112,13 @@ class Trainer:
     
         # save final model
         self._save_checkpoint(epoch=epoch,step=num_grad_updates,checkpoint_name="final.pt")
+
+    def log_grad_norm(self,epoch,step):
+        if step%self.grad_norm_freq!= 0:
+            return
+
+        for name,norm in self.model.calc_grad_norms().items():
+            self.wandb_run.log( {f"grad_norms/{name}":norm},step=step )
 
     def run_evals(self,epoch,step,):
         # check if we need to run evals

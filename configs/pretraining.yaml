@@ -1,7 +1,7 @@
 run:
   project_name: "sudani_llm_pretraining"
-  run_name: "base_dataset_4_layer_mmlu"
-  run_description: "bla bla bla"
+  run_name: "half_dataset_4_layer"
+  run_description: "bigger run"
 
 model:
   name: "init_decoder"
@@ -45,7 +45,7 @@ train:
 eval:
   validation:
     freq: 500
-    run_at_0: True 
+    run_at_0: True
     dataloader:
       name: "arabic"
       split: "val"
@@ -75,3 +75,9 @@ eval:
     run_at_0: False
     prompts: ["<s>"]
     temperatures: [0,0.5,1,2]
+
+
+monitor:
+  grad_norm:
+    freq: 50
+

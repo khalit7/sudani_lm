@@ -14,7 +14,7 @@ dataset = load_dataset('lightonai/ArabicWeb24', data_files='ArabicWeb24/**/*.arr
 # build the tokenzier
 
 SAVE_DIR = Path("~/sudani_lm/tokenizers/init_tokenizer/")
-percentage_of_data_to_train_tokenizer = 0.01
+percentage_of_data_to_train_tokenizer = 0.1
 vocab_size = 8 *10**3
 
 num_datapoints = int(len(dataset)*percentage_of_data_to_train_tokenizer)

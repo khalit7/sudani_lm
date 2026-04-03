@@ -39,7 +39,7 @@ class ValidationEvaluator(Evaluator):
             loss   = loss_fn(output.view(X["input_ids"].shape[0]*X["input_ids"].shape[1],-1),Y, ignore_index=ignore_index)
             total_loss += loss.item()
         avg_loss = total_loss/len(self.dataloader)
-        wandb_run.log({"val_loss":avg_loss},step=step)
+        wandb_run.log({"loss/val_loss":avg_loss},step=step)
 
         min_val_loss = wandb_run.summary.get("val_loss",{}).get("min",float("inf"))
         if avg_loss < min_val_loss:
@@ -99,15 +99,11 @@ class MMLUEvaluator(Evaluator):
         clf_report = classification_report(y_true,y_pred,output_dict=True,zero_division=0.0) 
          
         wandb_run.log( {
-            "mmlu_acc":clf_report["accuracy"],
-            "mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
-            "mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
-            "mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"],
-            "mmlu_macro_precision":clf_report["macro avg"]["precision"],
-            "mmlu_macro_recall"   :clf_report["macro avg"]["recall"],
-            "mmlu_macro_f1"       :clf_report["macro avg"]["f1-score"]
-
-
-
-
+            "mmlu/mmlu_acc":clf_report["accuracy"],
+            "mmlu/mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
+            "mmlu/mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
+            "mmlu/mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"],
+            "mmlu/mmlu_macro_precision":clf_report["macro avg"]["precision"],
+            "mmlu/mmlu_macro_recall"   :clf_report["macro avg"]["recall"],
+            "mmlu/mmlu_macro_f1"       :clf_report["macro avg"]["f1-score"]
             },step=step)

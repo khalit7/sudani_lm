@@ -1,3 +1,4 @@
+import random
 from typing import Any
 import torch
 from datasets import load_dataset
@@ -22,31 +23,36 @@ class MMLU(Dataset):
                 "ه"
                 ]
         self.options_ids     = self.tokenizer.convert_tokens_to_ids(self.options_tokens)
+        print("THOSE ARE THE TOKENS")
+        print(self.options_tokens)
+        print("THOSE ARE THE TOKENS IDS")
+        print(self.options_ids)
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, index):
+        idxs = list(range(1,5+1))
+        random.shuffle(idxs)
 
         datapoint = self.dataset[index]
 
         question = datapoint["Question"]
         context   = datapoint["Context"]
-        options  = [ f"{self.options_tokens[i-1]}. {datapoint[f'Option {i}']}" for i in range(1,5+1) ]
-        options_str = "\n   ".join(options)
+        options  = [ f"{self.options_tokens[letter_idx]} {datapoint[f'Option {option_idx}']}" for letter_idx,option_idx in enumerate(idxs) ]
+        options_str = "\n".join(options)
         answer_idx = ord(datapoint["Answer Key"].lower()) - ord("a")
+        shuffled_answer_idx = idxs.index(answer_idx+1)
 
 
         text_input = \
-        f"""
-        اسمع يا زول، انا حاسالك سؤال و بديك خمسه خيارات، دايرك تجاوب الاجابه الصاح ب انك تختار الحرف بس! ما تحاول تكتب الكلام، اختار الحرف بتاع الاجابه الصاح بس. 
-        السؤال:
-        {question}
-        الخيارات: 
-        {options_str}
-        الاجابه:"""
+f"""
+{question}
 
-        return (text_input,answer_idx)
+{options_str}
+"""
+
+        return (text_input,shuffled_answer_idx)
 
 
 

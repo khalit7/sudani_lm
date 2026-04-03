@@ -7,15 +7,18 @@ from torch.utils import data
 from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
-
+from data.src.tokenizer.utils import get_tokenizer
 
 class Factory:
     def __init__(self,config) -> None:
         self.config = config
 
+    def get_tokenizer(self):
+        return get_tokenizer()
 
     def get_model(self) -> nn.Module :
-        
+        tokenizer = self.get_tokenizer()
+        self.config["model"]["config"]["vocab_size"] = len(tokenizer)
         model_name   = self.config["model"]["name"]
         model_config = self.config["model"]["config"]
         if model_name == "init_decoder":

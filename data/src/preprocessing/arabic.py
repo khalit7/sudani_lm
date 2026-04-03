@@ -7,7 +7,7 @@ data_root = Path("~/sudani_lm/data").expanduser()
 
 data_path = data_root/"arab"/"raw"
 full_dataset = load_dataset('lightonai/ArabicWeb24', data_files='ArabicWeb24/**/*.arrow', split='train',cache_dir=data_path)
-full_dataset = full_dataset.train_test_split(test_size=0.1,seed=seed)["test"]
+full_dataset = full_dataset.train_test_split(test_size=0.5,seed=seed)["test"]
 
 print("dataset size after dropout",len(full_dataset))
 
@@ -25,7 +25,7 @@ full_dataset = full_dataset.filter(
         num_proc=16
         )
 
-splitted_dataset = full_dataset.train_test_split(test_size=0.02)
+splitted_dataset = full_dataset.train_test_split(test_size=0.002)
 
 train_dataset = splitted_dataset["train"]
 val_dataset   = splitted_dataset["test"]
