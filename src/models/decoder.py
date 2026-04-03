@@ -69,7 +69,7 @@ class MaskedMultiHeadAttn(nn.Module):
         Q = Q.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
         V = V.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
 
-        attn_score = K@Q.transpose(-1,-2)                   # (batch_size,num_heads,seq_len,seq_len)
+        attn_score = K@Q.transpose(-1,-2)/self.d_k**0.5                   # (batch_size,num_heads,seq_len,seq_len)
         final_mask = attention_mask.unsqueeze(1).unsqueeze(1).bool() & self.causal_mask[0:seq_len,0:seq_len].unsqueeze(0).unsqueeze(0)
         attn_score = attn_score.masked_fill(torch.logical_not(final_mask),value=float("-inf"))
         attn_score = torch.nn.functional.softmax(attn_score,dim=-1)
