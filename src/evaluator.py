@@ -29,14 +29,14 @@ class Evaluator(ABC):
 
 class ValidationEvaluator(Evaluator):
 
-    def eval(self,wandb_run,step,ignore_index):
+    def eval(self,wandb_run,step):
         loss_fn = torch.nn.functional.cross_entropy
         total_loss = 0
         for X,Y in tqdm(self.dataloader):
             X = {k:v.to(self.device) for k,v in X.items()}
             Y = Y.to(self.device).flatten()
             output = self.model(**X)
-            loss   = loss_fn(output.view(X["input_ids"].shape[0]*X["input_ids"].shape[1],-1),Y, ignore_index=ignore_index)
+            loss   = loss_fn(output.view(X["input_ids"].shape[0]*X["input_ids"].shape[1],-1),Y)
             total_loss += loss.item()
         avg_loss = total_loss/len(self.dataloader)
         wandb_run.log({"loss/val_loss":avg_loss},step=step)

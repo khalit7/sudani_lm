@@ -12,15 +12,15 @@ class ArabicPretrainingDataset(Dataset):
 
     def __init__(self,dataset,tokenizer) -> None:
         self.dataset = dataset
-        self.tokenzier = tokenizer
+        self.tokenizer = tokenizer
 
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        eos = self.tokenzier.eos_token
-        bos = self.tokenzier.bos_token
+        eos = self.tokenizer.eos_token
+        bos = self.tokenizer.bos_token
         try:
             return bos + self.dataset[idx]["text"] , self.dataset[idx]["text"] + eos
         except:
@@ -57,4 +57,6 @@ class ArabicPretrainingDatasetModule(BaseDatasetModule):
             max_length=1024,
             return_tensors="pt"
             )
-        return X,Y["input_ids"]
+        labels = Y["input_ids"]
+        labels[labels == self.tokenizer.pad_token_id] = -100
+        return X,labels

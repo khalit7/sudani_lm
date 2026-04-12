@@ -16,7 +16,7 @@ class Trainer:
 
         # TODO: Improved the tokenizer and loss function usage
         self.tokenizer = get_tokenizer()
-        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
+        self.loss_fn = torch.nn.CrossEntropyLoss()
 
         self.vocab_size = len(self.tokenizer)
         config["model"]["config"]["vocab_size"] = self.vocab_size 
@@ -43,6 +43,14 @@ class Trainer:
         self.model        = factory.get_model()
         self.optimiser    = factory.get_optimiser(self.model.parameters())
         self.lr_scheduler = factory.get_scheduler(self.total_training_steps,self.optimiser)
+
+        if config["model"]["config"]["is_resume_training"]:
+            checkpoint_path = Path("~/sudani_lm/checkpoints").expanduser() / config["model"]["config"]["checkpoint_name"]
+            checkpoint = torch.load(checkpoint_path)
+            self.model.load_state_dict( checkpoint["model_state_dict"] )
+            if config["model"]["config"]["load_all_states"]:
+                self.optimiser.load_state_dict( checkpoint["optimiser_state_dict"] )
+                self.lr_scheduler.load_state_dict( checkpoint["lr_state_dict"] )
 
         # get evaluators
         self.evals = factory.get_evals(self.model,self.device)
@@ -114,7 +122,7 @@ class Trainer:
         self._save_checkpoint(epoch=epoch,step=num_grad_updates,checkpoint_name="final.pt")
 
     def log_grad_norm(self,epoch,step):
-        if step%self.grad_norm_freq!= 0:
+        if step%self.grad_norm_freq!= 0 and step > 1000:
             return
 
         for name,norm in self.model.calc_grad_norms().items():
@@ -134,8 +142,6 @@ class Trainer:
                     "wandb_run":self.wandb_run,
                     "step": step
                     }
-                if eval.eval_name == "validation":
-                    params.update({"ignore_index":self.tokenizer.pad_token_id})
                 if eval.eval_name == "generation":
                     params.update({"tokenizer":self.tokenizer})
 

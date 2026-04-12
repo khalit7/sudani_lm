@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 config_root = Path("~/sudani_lm/configs").expanduser()
-config_name = "pretraining.yaml" 
+config_name = "arabic_ift.yaml" 
 # reading config file
 with open(config_root/config_name,'r') as f:
     config = yaml.safe_load(f)
@@ -29,9 +29,9 @@ if torch.cuda.is_available():
 elif torch.mps.is_available():
     device = "mps"
 
-for name,param in model.named_parameters():
-    print(name)
-    print(param)
+# for name,param in model.named_parameters():
+#     print(name)
+#     print(param)
 
 # model.to(device)
 # for _ in range(5):

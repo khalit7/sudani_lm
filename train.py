@@ -4,7 +4,7 @@ import yaml
 
 
 config_root = Path("~/sudani_lm/configs").expanduser()
-config_name = "pretraining.yaml"
+config_name = "arabic_ift.yaml"
  
 # reading config file
 with open(config_root/config_name,'r') as f:

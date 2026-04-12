@@ -4,6 +4,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
 from torch.utils import data
 
+from src.dataset.arabic_ift import ArabicIFTDatasetModule
 from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
@@ -67,6 +68,9 @@ class Factory:
             return dataset.build_dataloader(split,**dataloader_params)
         elif dataloader_name == "mmlu":
             dataset = ArabicMMLUDatasetModule()
+            return dataset.build_dataloader(split,**dataloader_params)
+        elif dataloader_name == "arabic_ift":
+            dataset = ArabicIFTDatasetModule()
             return dataset.build_dataloader(split,**dataloader_params)
         else:
             raise Exception("dataloader name not recognised")

@@ -47,9 +47,7 @@ class MMLU(Dataset):
 
         text_input = \
 f"""
-{question}
-
-{options_str}
+[inst] {question} [/inst]\n {options_str}
 """
 
         return (text_input,shuffled_answer_idx)

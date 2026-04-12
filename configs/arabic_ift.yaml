@@ -1,17 +1,18 @@
 run:
   project_name: "sudani_llm_pretraining"
-  run_name: "half_dataset_4_layer_fixed_attn"
-  run_description: "bigger run"
+  run_name: "ift_init_4_layers"
+  run_description: "<empty>"
 
 model:
   name: "init_decoder"
   config:
-    is_resume_training: False
-    checkpoint_name: null
+    is_resume_training: True 
+    load_all_states: False
+    checkpoint_name: "sudani_llm_pretraining/base_dataset_4_layer/best.pt"
 
     max_seq_len: 1024
     d_model: 512
-    num_layers: 4
+    num_layers: 4 
     num_heads: 8
 
 train:
@@ -30,7 +31,7 @@ train:
       warmup_start_factor: 0.33
 
   dataloader:
-    name: "arabic"
+    name: "arabic_ift"
     split: "train"
     config:
       batch_size: 64
@@ -47,8 +48,8 @@ eval:
     freq: 500
     run_at_0: True
     dataloader:
-      name: "arabic"
-      split: "val"
+      name: "arabic_ift"
+      split: "test"
       config:
         batch_size: 128
         shuffle: False
@@ -73,7 +74,7 @@ eval:
   generation:
     freq: 1000 
     run_at_0: False
-    prompts: ["<s>"]
+    prompts: ["<s>","[inst] ما هي طريقة الصلاه الصحيحه ؟ [/inst]\n","[inst]من هو اعظم انسان في الحياه ؟  [/inst]\n"]
     temperatures: [0,0.5,1,2]
 
 
