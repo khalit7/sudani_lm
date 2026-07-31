@@ -88,7 +88,7 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(self.d_model, self.d_model, bias=False)
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=False)
 
-    def forward(self, x, cos=None, sin=None, attn_mask=None):
+    def forward(self, x, cos=None, sin=None, attn_mask=None, past_kv=None, use_cache=False):
         batch, seq_len, _ = x.shape
 
         def split(proj):
@@ -98,17 +98,31 @@ class Attention(nn.Module):
         if cos is not None:
             q, k = apply_rope(q, k, cos, sin)
 
-        # attn_mask=None takes the flash path with is_causal=True and never materializes an
-        # (batch, heads, seq, seq) score matrix. That is the packed-pretraining case, where
-        # every position is a real token.
-        out = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=attn_mask is None,
-        )
+        if past_kv is not None:
+            k = torch.cat([past_kv[0], k], dim=2)
+            v = torch.cat([past_kv[1], v], dim=2)
+        present = (k, v) if use_cache else None
+
+        # Three cases:
+        #   prefill / training  q_len == k_len  -> is_causal handles the mask, no tensor built
+        #   cached decode       q_len == 1      -> the single query may attend to *every* cached
+        #                                          key, so no mask at all. is_causal would be
+        #                                          wrong here: SDPA aligns a causal mask to the
+        #                                          top-left, so it would let the token see only
+        #                                          position 0.
+        #   explicit mask       padding present -> use it as given
+        if attn_mask is None and seq_len == k.shape[2]:
+            out = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+            )
+        else:
+            out = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask,
+                dropout_p=self.dropout if self.training else 0.0, is_causal=False,
+            )
         out = out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
-        return self.out_proj(out)
+        out = self.out_proj(out)
+        return (out, present) if use_cache else out
 
 
 class SwiGLU(nn.Module):
@@ -142,10 +156,13 @@ class DecoderLayer(nn.Module):
         self.mlp = SwiGLU(config)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, cos=None, sin=None, attn_mask=None):
-        x = x + self.dropout(self.attn(self.norm1(x), cos, sin, attn_mask))
+    def forward(self, x, cos=None, sin=None, attn_mask=None, past_kv=None, use_cache=False):
+        attn_out = self.attn(self.norm1(x), cos, sin, attn_mask, past_kv, use_cache)
+        if use_cache:
+            attn_out, present = attn_out
+        x = x + self.dropout(attn_out)
         x = x + self.dropout(self.mlp(self.norm2(x)))
-        return x
+        return (x, present) if use_cache else x
 
 
 class DecoderModel(nn.Module):
@@ -187,14 +204,29 @@ class DecoderModel(nn.Module):
         eye = torch.eye(seq_len, dtype=torch.bool, device=device)[None, None, :, :]
         return mask | eye
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False):
         _, seq_len = input_ids.shape
         x = self.embed_dropout(self.token_embedding(input_ids))
-        cos, sin = self.rotary(seq_len)
+
+        # With a cache the new tokens sit *after* everything already cached, so RoPE has to be
+        # read at the absolute positions rather than from 0 — otherwise every generated token
+        # would be encoded as if it were at the start of the sequence.
+        past_len = past_key_values[0][0].shape[2] if past_key_values else 0
+        cos, sin = self.rotary(past_len + seq_len)
+        cos, sin = cos[past_len:], sin[past_len:]
+
         attn_mask = self.build_attn_mask(attention_mask, seq_len, x.device, x.dtype)
-        for layer in self.decoder_layers:
-            x = layer(x, cos, sin, attn_mask)
-        return self.final_norm(x)
+        presents = [] if use_cache else None
+        for i, layer in enumerate(self.decoder_layers):
+            past = past_key_values[i] if past_key_values else None
+            out = layer(x, cos, sin, attn_mask, past, use_cache)
+            if use_cache:
+                x, present = out
+                presents.append(present)
+            else:
+                x = out
+        x = self.final_norm(x)
+        return (x, presents) if use_cache else x
 
     def get_model_stats(self, verbose=True):
         param_size = sum(p.nelement() * p.element_size() for p in self.parameters())
@@ -244,9 +276,52 @@ class DecoderLMHeadModel(DecoderModel):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids, attention_mask=None):
-        hidden_states = super().forward(input_ids, attention_mask)
-        return self.head(hidden_states)
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False):
+        out = super().forward(input_ids, attention_mask, past_key_values, use_cache)
+        if use_cache:
+            hidden_states, presents = out
+            return self.head(hidden_states), presents
+        return self.head(out)
+
+    @torch.no_grad()
+    def generate(self, input_ids, max_new_tokens=64, temperature=1.0, top_k=None, top_p=None,
+                 eos_token_id=None):
+        """Sample a continuation, reusing the KV cache.
+
+        Without the cache each new token re-runs attention over the whole prefix, making
+        generation quadratic — which is why sampling used to be too expensive to log often.
+        """
+        self.eval()
+        past = None
+        generated = input_ids
+        step_input = input_ids
+
+        for _ in range(max_new_tokens):
+            logits, past = self(step_input, past_key_values=past, use_cache=True)
+            logits = logits[:, -1, :].float()
+
+            if temperature <= 0:
+                next_token = logits.argmax(dim=-1, keepdim=True)
+            else:
+                logits = logits / temperature
+                if top_k is not None:
+                    kth = logits.topk(min(top_k, logits.shape[-1]), dim=-1).values[:, -1:]
+                    logits = logits.masked_fill(logits < kth, float("-inf"))
+                if top_p is not None:
+                    ordered, order = logits.sort(dim=-1, descending=True)
+                    cumulative = ordered.softmax(dim=-1).cumsum(dim=-1)
+                    # keep the first token that crosses the threshold, drop the rest
+                    remove = cumulative - ordered.softmax(dim=-1) > top_p
+                    ordered = ordered.masked_fill(remove, float("-inf"))
+                    logits = ordered.gather(1, order.argsort(dim=-1))
+                next_token = torch.multinomial(logits.softmax(dim=-1), num_samples=1)
+
+            generated = torch.cat([generated, next_token], dim=-1)
+            step_input = next_token          # only the new token goes through the model
+            if eos_token_id is not None and (next_token == eos_token_id).all():
+                break
+
+        return generated
 
     def calc_grad_norms(self):
         grad_norms = {}

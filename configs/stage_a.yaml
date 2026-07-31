@@ -65,6 +65,38 @@ train:
   # Note the signed exponent: YAML 1.1 parses "239.0e12" as a *string*, not a float.
   peak_flops_per_gpu: 2.39e+14
 
+# Evaluators run on rank 0 at their own frequencies, in addition to the packed val loss.
+eval:
+  # The metric that tracks the project's goal. Independent of the WhatsApp holdout, which is
+  # self-referential (same people, same topics, same idiolect).
+  flores:
+    freq: 500
+    run_at_0: True
+    split: "DEV"          # DEVTEST is held back for the final number
+    batch_size: 16
+
+  # Primary MMLU variant: scores each answer's text, which a model this size can actually do.
+  mmlu_loglikelihood:
+    freq: 1000
+    run_at_0: True
+    max_examples: 500     # subsampled during training; run the full set at the end
+    batch_size: 16
+
+  # Secondary. Expected to sit near chance until well past this model size.
+  mmlu_letter:
+    freq: 1000
+    run_at_0: True
+    dataloader:
+      batch_size: 32
+      shuffle: False
+
+  generation:
+    freq: 1000
+    run_at_0: False
+    prompts: ["<s>", "<s>الخرطوم هي", "<s>[inst] ما هي عاصمة السودان؟ [/inst]\n"]
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 48
+
 monitor:
   grad_norm:
     freq: 50

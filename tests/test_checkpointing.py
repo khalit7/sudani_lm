@@ -1,52 +1,46 @@
-"""Regression tests for the checkpoint and best-model-selection bugs."""
+"""Regression tests for checkpointing and best-model selection.
+
+The original bug: `best.pt` was chosen by reading the wandb summary key "val_loss" while the
+metric was logged as "loss/val_loss". The lookup always missed, compared against inf, and so
+wrote "best.pt" at *every* validation — meaning a long run could easily end with a worse
+checkpoint than one it had passed through. The step-4 trainer tracks it in an attribute instead;
+these tests pin that behaviour.
+"""
+
+import inspect
 
 import torch
 
-from src.evaluator import ValidationEvaluator
-
-
-class FakeWandbRun:
-    def __init__(self):
-        self.logged = []
-        self.summary = {}
-
-    def log(self, data, step=None):
-        self.logged.append((step, data))
-
-
-def make_validation_evaluator(losses):
-    """A ValidationEvaluator whose eval() returns the given losses in order."""
-    ev = ValidationEvaluator.__new__(ValidationEvaluator)
-    ValidationEvaluator.__init__(
-        ev, model=None, device="cpu", frequency=1, run_at_0=False,
-        dataloader=None, eval_name="validation",
-    )
-    return ev
+from src.trainer import Trainer
 
 
 def test_best_checkpoint_only_written_on_improvement():
-    """Previously this read summary key "val_loss" while the metric was logged as
-    "loss/val_loss", so the lookup always missed, compared against inf, and returned
-    "best.pt" at every single validation."""
-    ev = make_validation_evaluator(None)
-    run = FakeWandbRun()
-
-    results = []
+    """Mirrors the comparison Trainer._validate makes after computing val_loss."""
+    best = float("inf")
+    written = []
     for loss in [3.0, 2.5, 2.7, 2.4, 2.9]:
-        # exercise the decision the real eval() makes after computing avg_loss
-        if loss < ev.best_val_loss:
-            ev.best_val_loss = loss
-            results.append("best.pt")
+        if loss < best:
+            best = loss
+            written.append("best.pt")
         else:
-            results.append(None)
+            written.append(None)
 
-    assert results == ["best.pt", "best.pt", None, "best.pt", None]
-    assert ev.best_val_loss == 2.4
+    assert written == ["best.pt", "best.pt", None, "best.pt", None]
+    assert best == 2.4
 
 
-def test_best_val_loss_starts_at_infinity():
-    ev = make_validation_evaluator(None)
-    assert ev.best_val_loss == float("inf")
+def test_trainer_compares_against_tracked_best_not_wandb_summary():
+    source = inspect.getsource(Trainer._validate)
+    assert "self.best_val_loss" in source, "best.pt must be gated on the tracked minimum"
+    assert "summary" not in source, "the wandb-summary lookup is back"
+
+
+def test_best_val_loss_survives_a_checkpoint_round_trip():
+    """Otherwise a resumed run writes best.pt on its first validation regardless of quality."""
+    save_source = inspect.getsource(Trainer._save_checkpoint)
+    load_source = inspect.getsource(Trainer._load_checkpoint)
+    assert '"best_val_loss"' in save_source
+    assert "best_val_loss" in load_source
 
 
 def test_checkpoint_keys_round_trip(tmp_path):

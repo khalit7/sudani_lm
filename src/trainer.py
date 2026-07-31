@@ -132,6 +132,10 @@ class Trainer:
             else nullcontext()
         )
 
+        # Pluggable evaluators (MMLU, Flores, generation). Built on rank 0 only — each is small
+        # next to a training step, and sharding them would buy nothing.
+        self.evaluators = factory.build_evaluators() if self.is_main else []
+
         self.grad_norm_freq = config.get("monitor", {}).get("grad_norm", {}).get("freq", 50)
         self.eval_every = train_cfg.get("eval_every", 500)
         self.checkpoint_every = train_cfg.get("checkpoint_every", 500)
@@ -186,6 +190,14 @@ class Trainer:
                 f"total {self.max_steps*self.tokens_per_step/1e9:.2f}B | world {self.world_size}",
                 flush=True,
             )
+
+        # Baseline before any optimizer step. Without this the first eval point is step
+        # eval_every, and there is nothing to compare it against — a random-init model should
+        # sit at chance on MMLU and at ln(vocab) loss, which is the cheapest sanity check there
+        # is that the eval plumbing itself is correct.
+        if self.step == 0:
+            self._run_evaluators(force_step_zero=True)
+            self.model.train()
 
         window_start = time.time()
         window_loss = 0.0
@@ -255,6 +267,7 @@ class Trainer:
 
             if self.step % self.eval_every == 0:
                 self._validate()
+                self._run_evaluators()
                 self.model.train()
                 window_start = time.time()
 
@@ -298,6 +311,45 @@ class Trainer:
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self._save_checkpoint("best.pt")
+
+    @torch.no_grad()
+    def _run_evaluators(self, force_step_zero: bool = False) -> None:
+        """Run the configured evaluators and log whatever they return.
+
+        Each is wrapped: a broken eval must not take down a run that is otherwise healthy, and
+        an eval that depends on missing data should degrade to a warning rather than a crash
+        several hours in.
+        """
+        if not self.evaluators:
+            return
+        self.model.eval()
+        for evaluator in self.evaluators:
+            if not evaluator.should_run(0 if force_step_zero else self.step):
+                continue
+            try:
+                metrics = evaluator.evaluate(self.raw_model, self.device, self.tokenizer)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  eval {evaluator.name} failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+            samples = metrics.pop("generation/samples", None)
+            if samples is not None:
+                self._log_samples(samples)
+            self._log(metrics)
+            if metrics:
+                summary = "  ".join(f"{k.split('/')[-1]} {v:.4f}" for k, v in metrics.items())
+                print(f"  {evaluator.name}: {summary}", flush=True)
+
+    def _log_samples(self, samples) -> None:
+        for sample in samples:
+            print(
+                f"    [T={sample['temperature']}] {sample['text'][:200]!r}",
+                flush=True,
+            )
+        if self.wandb_run is not None:
+            table = wandb.Table(columns=["step", "prompt", "temperature", "text"])
+            for sample in samples:
+                table.add_data(self.step, sample["prompt"], sample["temperature"], sample["text"])
+            self.wandb_run.log({"generation": table}, step=self.step)
 
     # ------------------------------------------------------------------------ bookkeeping ----
 

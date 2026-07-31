@@ -6,7 +6,6 @@ from torch.utils import data
 
 from src.dataset.arabic_ift import ArabicIFTDatasetModule
 from src.dataset.packed import PackedDatasetModule
-from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
 from src.tokenizer.utils import get_tokenizer
@@ -110,35 +109,43 @@ class Factory:
             raise Exception("dataloader name not recognised")
         
 
-    def _construct_eval(self,eval_name,eval_config,model,device) -> Evaluator:
-        frequency = eval_config["freq"]
-        run_at_0  = eval_config["run_at_0"]
-        dataloader_config = eval_config.get("dataloader")
-        dataloader = self.get_dataloader(dataloader_config)
-        if eval_name == "validation":
-            return ValidationEvaluator(model,device,frequency,run_at_0,dataloader,eval_name)
-        elif eval_name == "generation":
-            return GenerationEvaluator(
-                model,
-                device,
-                frequency,
-                run_at_0,
-                dataloader,
-                eval_name,
-                prompts=eval_config["prompts"],
-                temperatures=eval_config["temperatures"],
-                max_tokens=eval_config.get("max_tokens",50))
-        elif eval_name == "mmlu":
-            return MMLUEvaluator(model,device,frequency,run_at_0,dataloader,eval_name)
-        else:
-            raise Exception("eval name not recognised")
-        
-    def get_evals(self,model,device) -> list[Evaluator]:
-        eval_dict = self.config["eval"]
-        evals = []
-        for eval_name,eval_config in eval_dict.items():
-            evals.append(self._construct_eval(eval_name,eval_config,model,device))
-        return evals
+    def build_evaluators(self) -> list:
+        """Instantiate the evaluators declared under config["eval"].
 
-            
-        
+        Returns [] when the section is absent, so a pure-throughput run needs no eval config.
+        """
+        from src.evaluator import (
+            FloresPerplexityEvaluator,
+            GenerationEvaluator,
+            MMLULetterEvaluator,
+            MMLULoglikelihoodEvaluator,
+        )
+
+        evaluators = []
+        for name, cfg in (self.config.get("eval") or {}).items():
+            cfg = dict(cfg)
+            frequency = cfg.pop("freq", 500)
+            run_at_0 = cfg.pop("run_at_0", True)
+
+            if name == "mmlu_loglikelihood":
+                module = ArabicMMLUDatasetModule()
+                evaluators.append(MMLULoglikelihoodEvaluator(
+                    module.build_dataset(cfg.pop("split", "test")),
+                    frequency=frequency, run_at_0=run_at_0, **cfg,
+                ))
+            elif name == "mmlu_letter":
+                dataloader = self.get_dataloader({
+                    "name": "mmlu", "split": cfg.pop("split", "test"),
+                    "config": cfg.pop("dataloader", {"batch_size": 32, "shuffle": False}),
+                })
+                evaluators.append(MMLULetterEvaluator(
+                    dataloader, frequency=frequency, run_at_0=run_at_0))
+            elif name == "flores":
+                evaluators.append(FloresPerplexityEvaluator(
+                    frequency=frequency, run_at_0=run_at_0, **cfg))
+            elif name == "generation":
+                evaluators.append(GenerationEvaluator(
+                    frequency=frequency, run_at_0=run_at_0, **cfg))
+            else:
+                raise Exception(f"eval name not recognised: {name}")
+        return evaluators
