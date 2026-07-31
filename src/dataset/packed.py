@@ -80,7 +80,8 @@ class PackedDatasetModule(BaseDatasetModule):
     def colllate_fn(self, batch):
         inputs = torch.stack([x for x, _ in batch])
         labels = torch.stack([y for _, y in batch])
-        # attention_mask is all ones by construction; kept so the model signature is unchanged
-        # between packed pretraining and the padded evaluation paths.
-        attention_mask = torch.ones_like(inputs)
-        return {"input_ids": inputs, "attention_mask": attention_mask}, labels
+        # attention_mask is deliberately None, not a tensor of ones. Every position here is a
+        # real token, and passing None lets the model call SDPA with is_causal=True — the flash
+        # path, which never materializes an (batch, heads, seq, seq) score matrix. An all-ones
+        # mask would be numerically identical but would silently cost the whole speedup.
+        return {"input_ids": inputs, "attention_mask": None}, labels

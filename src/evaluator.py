@@ -53,7 +53,7 @@ class ValidationEvaluator(Evaluator):
         total_loss = 0.0
         total_tokens = 0
         for X,Y in tqdm(self.dataloader):
-            X = {k:v.to(self.device) for k,v in X.items()}
+            X = {k:(v.to(self.device) if v is not None else None) for k,v in X.items()}
             Y = Y.to(self.device).flatten()
             output = self.model(**X)
             # Summed, not averaged, so batches are weighted by their real token count instead

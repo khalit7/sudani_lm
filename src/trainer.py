@@ -99,7 +99,9 @@ class Trainer:
             for acc_steps,(X,Y) in enumerate(tqdm(self.train_dataloader),1):
 
                 # run training step with grad accumulation
-                X = {k:v.to(self.device) for k,v in X.items() }
+                # attention_mask is None on the packed path (every position is real), so the
+                # device move has to tolerate None rather than assume a tensor.
+                X = {k:(v.to(self.device) if v is not None else None) for k,v in X.items() }
                 Y = Y.flatten().to(self.device)
                 output = self.model(**X)
                 loss = self.loss_fn(output.view(-1,self.vocab_size),Y)

@@ -133,8 +133,10 @@ def test_collate_produces_fixed_shapes_and_no_padding(tiny_pack, tmp_path, monke
     X, labels = module.colllate_fn([ds[0], ds[1], ds[2]])
     assert X["input_ids"].shape == (3, 128)
     assert labels.shape == (3, 128)
-    # every position is a real token, so the mask is all ones by construction
-    assert bool(X["attention_mask"].all())
+    # attention_mask must be None, not a tensor of ones. Both are numerically identical, but
+    # None is what lets the model take SDPA's is_causal flash path instead of materializing an
+    # (batch, heads, seq, seq) score matrix — an all-ones mask would silently cost the speedup.
+    assert X["attention_mask"] is None
 
 
 # --- the real artifact, when it exists ---------------------------------------------------------
