@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
 from torch.utils import data
 
 from src.dataset.arabic_ift import ArabicIFTDatasetModule
+from src.dataset.packed import PackedDatasetModule
 from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
@@ -63,7 +64,17 @@ class Factory:
         split             = dataloader_config["split"]
         dataloader_params = dataloader_config["config"]
 
-        if dataloader_name == "arabic":
+        if dataloader_name == "packed":
+            # Offline-packed token stream: no tokenization in the hot loop, no padding, fixed
+            # shapes. This is the path pretraining should use.
+            dataset = PackedDatasetModule(
+                stage=dataloader_config.get("stage", "pretrain"),
+                block_size=dataloader_config.get("block_size", 1024),
+            )
+            return dataset.build_dataloader(split,**dataloader_params)
+        elif dataloader_name == "arabic":
+            # Legacy path: tokenizes twice per example inside the collate function and truncates
+            # documents at 1024 tokens. Superseded by "packed"; kept only to reproduce old runs.
             dataset = ArabicPretrainingDatasetModule()
             return dataset.build_dataloader(split,**dataloader_params)
         elif dataloader_name == "mmlu":
