@@ -1,19 +1,27 @@
+# Notes and plan are personal working files
 notes.md
+plan.md
 
-**/__pycache__
-wandb
+# Data: ignore everything, keep only the datasheet
+data/**
+!data/
+!data/DATASHEET.md
 
-# 1. Ignore all files inside the data folder
-data/**/*
+# Training outputs
+checkpoints/
+logs/
+wandb/
 
-# Allow all directories inside data 
-!data/**/
+# Environment
+.venv/
+env/
+.env
 
-# Exception: Keep any README.md anywhere inside data/
-!data/**/README.md
-
-# Exception: Keep any file with "_sample" in the name anywhere inside data/
-!data/**/*_sample*
-
-# Exception: keep all files in data/src/
-!data/src/**
+# Python
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/

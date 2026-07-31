@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import Dataset,DataLoader
-from data.src.tokenizer.utils import get_tokenizer
+from src.tokenizer.utils import get_tokenizer
 from src import dataset
 from src.dataset.base import BaseDatasetModule
 from datasets import load_dataset

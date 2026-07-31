@@ -18,6 +18,16 @@ dependencies = [
     "wandb>=0.25.0",
 ]
 
+# Makes `src` an installed package so `from src...` resolves regardless of the working
+# directory. Without this, imports only work when python is launched from the repo root,
+# which breaks under torchrun.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
 [[tool.uv.index]]
 name = "pytorch-cuda"
 url = "https://download.pytorch.org/whl/cu128"

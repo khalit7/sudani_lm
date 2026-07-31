@@ -8,7 +8,7 @@ from src.dataset.arabic_ift import ArabicIFTDatasetModule
 from src.evaluator import Evaluator, GenerationEvaluator, MMLUEvaluator, ValidationEvaluator
 from src.models.decoder import DecoderLMHeadModel
 from src.dataset import ArabicPretrainingDatasetModule,ArabicMMLUDatasetModule
-from data.src.tokenizer.utils import get_tokenizer
+from src.tokenizer.utils import get_tokenizer
 
 class Factory:
     def __init__(self,config) -> None:

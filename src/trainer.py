@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 import wandb
 from src.factory import Factory
-from data.src.tokenizer.utils import get_tokenizer
+from src.tokenizer.utils import get_tokenizer
 
 
 

@@ -5,7 +5,7 @@ from datasets import load_dataset
 from torch.nn.modules import padding
 from torch.utils.data import Dataset
 from src.dataset.base import BaseDatasetModule
-from data.src.tokenizer.utils import get_tokenizer
+from src.tokenizer.utils import get_tokenizer
 
 
 

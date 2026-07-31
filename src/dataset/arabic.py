@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from src.dataset.base import BaseDatasetModule
 
-from data.src.tokenizer.utils import get_tokenizer
+from src.tokenizer.utils import get_tokenizer
 
 data_root = Path("~/sudani_lm/data").expanduser()
 
