@@ -1,4 +1,13 @@
-"""Regression tests for the trainer's step counter and grad-norm logging cadence."""
+"""Regression tests for step counting and grad-norm cadence.
+
+These pin bugs from the epoch-based trainer that the Step 4 rewrite superseded. The rewrite makes
+them structurally impossible — there is no epoch loop to reset a counter, and the LR schedule is
+a pure function of the step with no state to mismatch — but the arithmetic is kept here as the
+record of what went wrong, and `test_new_trainer_has_no_epoch_state` guards the property that
+replaced them.
+"""
+
+import inspect
 
 from src.trainer import Trainer
 
@@ -59,11 +68,27 @@ def test_old_grad_norm_guard_ignored_frequency_below_1000():
     assert len([s for s in range(1, 1001) if grad_norm_fires(s, 10)]) == 100
 
 
-def test_trainer_reads_load_all_states_with_a_default():
-    """A config without load_all_states must resume weights-only, not raise KeyError."""
-    import inspect
+def test_new_trainer_has_no_epoch_state():
+    """The step-reset bug is gone by construction: the rewrite counts steps, not epochs.
 
-    source = inspect.getsource(Trainer.__init__)
-    assert '.get("load_all_states"' in source, "load_all_states must be read defensively"
-    assert 'checkpoint["lr_scheduler_state_dict"]' in source, "must match the saved key"
-    assert 'checkpoint["lr_state_dict"]' not in source, "the mismatched key is back"
+    Replaces an earlier test that inspected __init__ for `load_all_states` and
+    `lr_scheduler_state_dict` guards. Both are obsolete — the new trainer has no epoch loop and
+    no scheduler object, so neither the counter reset nor the key mismatch can recur.
+    """
+    source = inspect.getsource(Trainer)
+    assert "num_epochs" not in source, "trainer must be step-based, not epoch-based"
+    assert "lr_scheduler_state_dict" not in source, "schedule is a pure function of the step"
+    assert "self.step" in source and "max_steps" in source
+
+
+def test_checkpoint_persists_step_and_data_cursor():
+    """Resuming must restore both, or the run replays data it has already trained on."""
+    source = inspect.getsource(Trainer._save_checkpoint)
+    for key in ("step", "data_state", "optimiser_state_dict", "best_val_loss"):
+        assert f'"{key}"' in source, f"checkpoint is missing {key}"
+
+
+def test_checkpoint_write_is_atomic():
+    """A crash mid-write must leave the previous checkpoint intact, not a truncated file."""
+    source = inspect.getsource(Trainer._save_checkpoint)
+    assert ".tmp" in source and "rename" in source

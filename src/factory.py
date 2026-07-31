@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from torch.optim.lr_scheduler import LinearLR,CosineAnnealingLR,SequentialLR
 from torch.utils import data
 
@@ -28,14 +28,37 @@ class Factory:
         else:
             raise Exception("Model name not recognised")
 
-    def get_optimiser(self,model_parameters) -> torch.optim.Optimizer :
+    def get_packed_module(self, stage: str, block_size: int) -> PackedDatasetModule:
+        return PackedDatasetModule(stage=stage, block_size=block_size)
+
+    def get_optimiser(self,model) -> torch.optim.Optimizer :
 
         optimiser_name   = self.config["train"]["optimiser"]["name"]
-        optimiser_config = self.config["train"]["optimiser"]["config"]
+        optimiser_config = dict(self.config["train"]["optimiser"]["config"])
         if optimiser_name == "adam":
-            return Adam(model_parameters,**optimiser_config)
-        else:
+            # Legacy path: plain Adam over one undifferentiated parameter group.
+            return Adam(model.parameters(), **optimiser_config)
+        if optimiser_name != "adamw":
             raise Exception("Optimiser name not recognised")
+
+        weight_decay = optimiser_config.pop("weight_decay", 0.1)
+        # Decay only matrices. Applying it to norms and biases (all 1-D) shrinks parameters
+        # that have no scale redundancy, which hurts rather than regularises.
+        decay, no_decay = [], []
+        for param in model.parameters():
+            if not param.requires_grad:
+                continue
+            (decay if param.dim() >= 2 else no_decay).append(param)
+
+        fused = torch.cuda.is_available()
+        return AdamW(
+            [
+                {"params": decay, "weight_decay": weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            fused=fused,
+            **optimiser_config,
+        )
 
     def get_scheduler(self,total_training_steps,optimiser):
 
