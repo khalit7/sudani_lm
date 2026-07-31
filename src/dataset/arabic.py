@@ -19,8 +19,6 @@ class ArabicPretrainingDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        # No try/except here on purpose: swallowing the error returned None, which then became
-        # a malformed batch downstream instead of a traceback pointing at the bad row.
         text = self.dataset[idx]["text"]
         return self.tokenizer.bos_token + text, text + self.tokenizer.eos_token
 
