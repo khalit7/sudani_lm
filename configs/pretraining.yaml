@@ -7,6 +7,7 @@ model:
   name: "init_decoder"
   config:
     is_resume_training: False
+    load_all_states: False
     checkpoint_name: null
 
     max_seq_len: 1024

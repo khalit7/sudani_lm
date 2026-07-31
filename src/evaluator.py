@@ -1,10 +1,22 @@
 from abc import ABC, abstractmethod
+from collections import Counter
 
 import torch
 from tqdm import tqdm
 import wandb
 
 from sklearn.metrics import classification_report
+
+def last_real_token_logits(output, attention_mask):
+    """Logits at each row's final non-padding position.
+
+    `output[:, -1, :]` is the last position of the *padded* batch, which is a <pad> token for
+    every row shorter than the batch maximum, so it reads the model's state at padding rather
+    than at the end of the prompt.
+    """
+    last_idx = attention_mask.sum(dim=-1) - 1                      # (batch,)
+    return output[torch.arange(output.shape[0], device=output.device), last_idx]
+
 
 class Evaluator(ABC):
     def __init__(self,model,device,frequency,run_at_0,dataloader,eval_name) -> None:
@@ -29,23 +41,33 @@ class Evaluator(ABC):
 
 class ValidationEvaluator(Evaluator):
 
+    def __init__(self,*args,**kwargs) -> None:
+        super().__init__(*args,**kwargs)
+        # Tracked here rather than read back from the wandb summary: the metric is logged as
+        # "loss/val_loss", so looking up "val_loss" always missed and compared against inf,
+        # which meant every single validation wrote "best.pt".
+        self.best_val_loss = float("inf")
+
     def eval(self,wandb_run,step):
         loss_fn = torch.nn.functional.cross_entropy
-        total_loss = 0
+        total_loss = 0.0
+        total_tokens = 0
         for X,Y in tqdm(self.dataloader):
             X = {k:v.to(self.device) for k,v in X.items()}
             Y = Y.to(self.device).flatten()
             output = self.model(**X)
-            loss   = loss_fn(output.view(X["input_ids"].shape[0]*X["input_ids"].shape[1],-1),Y)
+            # Summed, not averaged, so batches are weighted by their real token count instead
+            # of every batch counting equally regardless of how much padding it carried.
+            loss = loss_fn(output.view(Y.shape[0],-1),Y,ignore_index=-100,reduction="sum")
             total_loss += loss.item()
-        avg_loss = total_loss/len(self.dataloader)
+            total_tokens += int((Y != -100).sum().item())
+        avg_loss = total_loss/max(total_tokens,1)
         wandb_run.log({"loss/val_loss":avg_loss},step=step)
 
-        min_val_loss = wandb_run.summary.get("val_loss",{}).get("min",float("inf"))
-        if avg_loss < min_val_loss:
+        if avg_loss < self.best_val_loss:
+            self.best_val_loss = avg_loss
             return "best.pt"
-        else:
-            return None
+        return None
 
 class GenerationEvaluator(Evaluator):
 
@@ -86,24 +108,42 @@ class MMLUEvaluator(Evaluator):
 
     def eval(self,wandb_run,step):
 
+        options_ids = torch.tensor(self.dataloader.dataset.options_ids,device=self.device)
         y_pred = []
         y_true = []
-        for X,Y in tqdm(self.dataloader):
+        chance = 0.0
+        for X,(Y,n_options) in tqdm(self.dataloader):
             X = { k:v.to(self.device) for k,v in X.items()}
-            output = self.model(**X)# has shape (batch_size,seq_len,vocab_size)
-            next_token_logits = output[:,-1,:]# has shape (batch_size,vocab_size)
-            filtered_logits = next_token_logits[:,self.dataloader.dataset.options_ids] # has shape (batch_size,num_options)
-            y_pred.extend( filtered_logits.argmax(dim=-1).cpu().tolist())
-            y_true.extend(Y)
+            n_options = n_options.to(self.device)
+            output = self.model(**X)                                   # (batch,seq,vocab)
+            next_token_logits = last_real_token_logits(output,X["attention_mask"])
+            filtered_logits = next_token_logits[:,options_ids]          # (batch,MAX_OPTIONS)
 
-        clf_report = classification_report(y_true,y_pred,output_dict=True,zero_division=0.0) 
-         
+            # Mask option slots this question does not have, so a 3-option question can never
+            # be answered "د" or "ه".
+            slots = torch.arange(filtered_logits.shape[1],device=self.device)
+            filtered_logits = filtered_logits.masked_fill(
+                slots.unsqueeze(0) >= n_options.unsqueeze(1), float("-inf")
+            )
+
+            y_pred.extend(filtered_logits.argmax(dim=-1).cpu().tolist())
+            y_true.extend(Y.tolist())
+            chance += (1.0/n_options).sum().item()
+
+        clf_report = classification_report(y_true,y_pred,output_dict=True,zero_division=0.0)
+
+        # Logged alongside accuracy because this benchmark's chance level is not a constant —
+        # option counts vary from 2 to 5 — so "above 0.2" is not the right reference line.
+        pred_hist = Counter(y_pred)
         wandb_run.log( {
             "mmlu/mmlu_acc":clf_report["accuracy"],
+            "mmlu/mmlu_chance":chance/max(len(y_true),1),
             "mmlu/mmlu_weighted_precision":clf_report["weighted avg"]["precision"],
             "mmlu/mmlu_weighted_recall"   :clf_report["weighted avg"]["recall"],
             "mmlu/mmlu_weighted_f1"       :clf_report["weighted avg"]["f1-score"],
             "mmlu/mmlu_macro_precision":clf_report["macro avg"]["precision"],
             "mmlu/mmlu_macro_recall"   :clf_report["macro avg"]["recall"],
-            "mmlu/mmlu_macro_f1"       :clf_report["macro avg"]["f1-score"]
+            "mmlu/mmlu_macro_f1"       :clf_report["macro avg"]["f1-score"],
+            # Surfaces the "model always answers أ" failure mode directly.
+            **{f"mmlu/pred_frac_{i}":pred_hist.get(i,0)/max(len(y_pred),1) for i in range(5)},
             },step=step)

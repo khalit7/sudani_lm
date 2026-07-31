@@ -186,35 +186,9 @@ class DecoderLMHeadModel(DecoderModel):
         super().__init__(config)
         self.head = nn.Linear(self.d_model,self.vocab_size)
 
-    def forward(self,input_ids,attention_mask,labels=None,chunk_size=10,ignore_index=None):
-
-        hidden_states = super().forward(input_ids,attention_mask) # shape is (batch_size,seq_len,d_model)
-        if labels == None: 
-            return self.head(hidden_states)# shape is (batch_size,seq_len,vocab_size)
-        else: 
-            loss = self.chunked_lm_head(hidden_states.view(-1,self.d_model),labels.view(-1),chunk_size,ignore_index)
-            return loss
-
-    def chunked_lm_head(self,hidden_states,labels,chunk_size,ignore_index):
-        # TODO: verify this implementation
-        # hidden_states has shape (batch_size*seq_len,d_model)
-        # labels has shape (batch_size*seq_len)
-        num_tokens,_ = hidden_states.shape
-        total_tokens = (labels != ignore_index).sum()
-        total_loss = 0
-        for i in range(0,num_tokens,chunk_size):
-            print("running on chunk i",i)
-            hidden_states_chunk = hidden_states[i:i+chunk_size,:] # has shape (chunk_size,d_model)
-            labels_chunk        = labels[i:i+chunk_size]
-            output_chunk = self.head(hidden_states_chunk) # has shape (chunk_size,vocab_size)
-            loss_chunk = torch.nn.functional.cross_entropy(output_chunk,labels_chunk,ignore_index=ignore_index,reduction="sum")
-            print("loss_chunk : ",loss_chunk)
-            loss = loss_chunk/total_tokens
-            print("loss : ",loss)
-            loss.backward(retain_graph=True)
-            total_loss += loss.item()
-
-        return total_loss
+    def forward(self,input_ids,attention_mask):
+        hidden_states = super().forward(input_ids,attention_mask) # (batch_size,seq_len,d_model)
+        return self.head(hidden_states)                           # (batch_size,seq_len,vocab_size)
 
     def calc_grad_norms(self):
         grad_norms = {}

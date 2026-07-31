@@ -44,13 +44,22 @@ class Trainer:
         self.optimiser    = factory.get_optimiser(self.model.parameters())
         self.lr_scheduler = factory.get_scheduler(self.total_training_steps,self.optimiser)
 
+        self.start_epoch = 0
+        self.global_step = 0
         if config["model"]["config"]["is_resume_training"]:
             checkpoint_path = Path("~/sudani_lm/checkpoints").expanduser() / config["model"]["config"]["checkpoint_name"]
             checkpoint = torch.load(checkpoint_path)
             self.model.load_state_dict( checkpoint["model_state_dict"] )
-            if config["model"]["config"]["load_all_states"]:
+            # .get() so a config that omits load_all_states resumes weights-only instead of
+            # dying with a KeyError.
+            if config["model"]["config"].get("load_all_states",False):
                 self.optimiser.load_state_dict( checkpoint["optimiser_state_dict"] )
-                self.lr_scheduler.load_state_dict( checkpoint["lr_state_dict"] )
+                # Key must match what _save_checkpoint writes; it used to read "lr_state_dict"
+                # against a checkpoint written as "lr_scheduler_state_dict", so every resume
+                # with load_all_states raised KeyError.
+                self.lr_scheduler.load_state_dict( checkpoint["lr_scheduler_state_dict"] )
+                self.start_epoch = checkpoint.get("epoch",0)
+                self.global_step = checkpoint.get("step",0)
 
         # get evaluators
         self.evals = factory.get_evals(self.model,self.device)
@@ -82,10 +91,11 @@ class Trainer:
         self.model.train()
 
         print("Starting training on device = ",self.device)
-        self.run_evals(epoch=0,step=0)
+        self.run_evals(epoch=self.start_epoch,step=self.global_step)
 
         total_loss = 0
-        for epoch in range(self.num_epochs):
+        epoch = self.start_epoch
+        for epoch in range(self.start_epoch,self.num_epochs):
             for acc_steps,(X,Y) in enumerate(tqdm(self.train_dataloader),1):
 
                 # run training step with grad accumulation
@@ -97,32 +107,34 @@ class Trainer:
                 loss.backward()
 
                 total_loss += loss.detach().item()
-                num_grad_updates = acc_steps//self.grad_acc_every
 
                 # check if we need to update weights
                 if acc_steps % self.grad_acc_every == 0 :
+                    # Monotonic across epochs. It used to be derived from acc_steps, which
+                    # restarts every epoch, so on epoch 2 the wandb step went backwards.
+                    self.global_step += 1
                     self.optimiser.step()
                     self.lr_scheduler.step()
-                    self.log_grad_norm(epoch=epoch,step=num_grad_updates)
+                    self.log_grad_norm(step=self.global_step)
                     self.optimiser.zero_grad()
                     self.wandb_run.log(
                                         {
                     "loss/train_loss":total_loss,
                     "learning_rate":self.optimiser.param_groups[0]["lr"]
                                         },
-                                        step=num_grad_updates)
+                                        step=self.global_step)
                     total_loss = 0
 
-                    self.run_evals(epoch=epoch,step=num_grad_updates)
+                    self.run_evals(epoch=epoch,step=self.global_step)
 
-    
-
-    
         # save final model
-        self._save_checkpoint(epoch=epoch,step=num_grad_updates,checkpoint_name="final.pt")
+        self._save_checkpoint(epoch=epoch,step=self.global_step,checkpoint_name="final.pt")
 
-    def log_grad_norm(self,epoch,step):
-        if step%self.grad_norm_freq!= 0 and step > 1000:
+    def log_grad_norm(self,step):
+        # Was `step % freq != 0 and step > 1000`, which with freq=1 never returned early, so
+        # calc_grad_norms ran every step — and it calls .item() per layer, forcing a GPU sync
+        # each time.
+        if step % self.grad_norm_freq != 0:
             return
 
         for name,norm in self.model.calc_grad_norms().items():
