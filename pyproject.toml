@@ -44,5 +44,10 @@ torchvision = [
   { index = "pytorch-cuda", marker = "sys_platform != 'darwin'" },
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
 [tool.uv]
 index-strategy = "unsafe-best-match"

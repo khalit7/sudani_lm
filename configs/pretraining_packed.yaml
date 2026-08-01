@@ -1,0 +1,95 @@
+# Pretraining on the offline-packed token stream (Part I, Step 2).
+#
+# Differs from pretraining.yaml only in the data path: "packed" instead of "arabic". Every
+# position is a real token, so there is no padding waste and no truncation, and shapes are
+# constant across steps.
+#
+# The model here is still the pre-Step-3 decoder (post-LN, sinusoidal positions, hand-rolled
+# attention) and the trainer is still epoch-based. Those are rewritten in Steps 3 and 4; this
+# config exists so the packed data path can be exercised on its own first.
+
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "packed_smoke"
+  run_description: "first run on the packed uint16 stream, v2 32k tokenizer"
+
+model:
+  name: "init_decoder"
+  config:
+    is_resume_training: False
+    load_all_states: False
+    checkpoint_name: null
+
+    max_seq_len: 1024
+    d_model: 512
+    num_layers: 4
+    num_heads: 8
+
+train:
+  num_epochs: 1
+  effective_batch_size: 128
+
+  optimiser:
+    name: "adam"
+    config:
+      lr: 0.0003
+
+  scheduler:
+    name: "warmup_cos"
+    config:
+      warmup_percentage: 0.02
+      warmup_start_factor: 0.1
+
+  dataloader:
+    name: "packed"
+    stage: "pretrain"
+    block_size: 1024
+    split: "train"
+    config:
+      batch_size: 32
+      shuffle: True
+      num_workers: 8
+      prefetch_factor: 4
+      pin_memory: True
+      persistent_workers: False
+
+eval:
+  validation:
+    freq: 500
+    run_at_0: True
+    dataloader:
+      name: "packed"
+      stage: "pretrain"
+      block_size: 1024
+      split: "val"
+      config:
+        batch_size: 32
+        shuffle: False
+        num_workers: 4
+        prefetch_factor: 4
+        pin_memory: True
+        persistent_workers: True
+
+  mmlu:
+    freq: 500
+    run_at_0: True
+    dataloader:
+      name: "mmlu"
+      split: "test"
+      config:
+        batch_size: 64
+        shuffle: False
+        num_workers: 4
+        prefetch_factor: 4
+        pin_memory: True
+        persistent_workers: True
+
+  generation:
+    freq: 1000
+    run_at_0: False
+    prompts: ["<s>"]
+    temperatures: [0, 0.7]
+
+monitor:
+  grad_norm:
+    freq: 50

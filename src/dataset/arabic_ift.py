@@ -35,7 +35,7 @@ class ArabicIFTDatasetModule(BaseDatasetModule):
         self.tokenizer = get_tokenizer()
 
     def build_dataset(self, split) -> torch.utils.data.Dataset:
-        dataset = load.load_from_disk(data_root/"arabic_ift"/split)
+        dataset = load.load_from_disk(data_root/"raw"/"instar500k"/split)
         return ArabicIFTDataset(dataset=dataset,tokenizer=self.tokenizer)
 
     def colllate_fn(self, batch) -> Any:

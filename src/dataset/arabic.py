@@ -19,15 +19,8 @@ class ArabicPretrainingDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        eos = self.tokenizer.eos_token
-        bos = self.tokenizer.bos_token
-        try:
-            return bos + self.dataset[idx]["text"] , self.dataset[idx]["text"] + eos
-        except:
-            print("WTF!!")
-            print(eos)
-            print(bos)
-            print(self.dataset[idx])
+        text = self.dataset[idx]["text"]
+        return self.tokenizer.bos_token + text, text + self.tokenizer.eos_token
 
 
 
@@ -38,7 +31,7 @@ class ArabicPretrainingDatasetModule(BaseDatasetModule):
         self.tokenizer = get_tokenizer()
 
     def build_dataset(self,split):
-        data_path = data_root/"arab"/"processed"/split
+        data_path = data_root/"interim"/"arabicweb24_filtered"/split
         dataset = load.load_from_disk(data_path)
         return ArabicPretrainingDataset(dataset,self.tokenizer)
 

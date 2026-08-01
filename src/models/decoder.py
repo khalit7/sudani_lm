@@ -1,242 +1,347 @@
+"""Decoder for the Sudanese chat model.
+
+Rewritten from src/models/decoder_deprecated.py, which remains as the reference implementation
+and correctness oracle. What changed and why:
+
+  pre-LN instead of post-LN     post-LN degrades as layers are added and needs careful warmup;
+                                this is what makes the 4 -> 12 layer jump trainable
+  final norm before the head    absent before. Harmless under post-LN, wrong under pre-LN
+  RoPE instead of additive      better length behaviour, and drops the fixed max_seq_len buffer
+  SDPA instead of a manual      measured 25.7 ms / 2.45 GB -> 0.40 ms / 0.88 GB at Stage-B
+  score matrix                  shapes; the freed memory is what allows the planned batch size
+  SwiGLU instead of GELU        same parameter count at 2/3 the hidden width
+  tied embeddings               saves 24.6M parameters at 110M — 22% of the model
+  scaled residual init          keeps residual-stream variance stable with depth
+
+Config keys (all optional except vocab_size/d_model/num_layers/num_heads):
+    vocab_size, d_model, num_layers, num_heads, max_seq_len,
+    dropout (0.0), rope_base (10000.0), tie_embeddings (True), mlp_hidden (derived)
+"""
+
+import math
+
 import torch
 import torch.nn as nn
-from torch.profiler import ProfilerActivity,profile,record_function
+import torch.nn.functional as F
 
-class PositionalEmbedding(nn.Module):
-    def __init__(self,config) -> None:
+
+def swiglu_hidden_dim(d_model: int, multiple_of: int = 64) -> int:
+    """8/3 * d_model rounded up to a multiple of 64.
+
+    SwiGLU uses three projections instead of two, so 8/3 rather than 4 keeps the parameter
+    count level with a standard GELU MLP.
+    """
+    hidden = int(8 * d_model / 3)
+    return multiple_of * ((hidden + multiple_of - 1) // multiple_of)
+
+
+class RotaryEmbedding(nn.Module):
+    """Precomputed RoPE tables.
+
+    Positions are encoded by rotating (q, k) rather than by adding a vector to the embedding,
+    so position information reaches every layer's attention rather than only the input.
+    """
+
+    def __init__(self, head_dim: int, max_seq_len: int, base: float = 10000.0) -> None:
         super().__init__()
-        self.d_model     = config["d_model"]
-        self.max_seq_len = config["max_seq_len"]
+        if head_dim % 2 != 0:
+            raise ValueError(f"head_dim must be even for RoPE, got {head_dim}")
+        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        position = torch.arange(max_seq_len).float()
+        angles = torch.outer(position, inv_freq)          # (max_seq_len, head_dim/2)
+        # Duplicated so the table lines up with the rotate_half split below.
+        emb = torch.cat([angles, angles], dim=-1)         # (max_seq_len, head_dim)
+        self.register_buffer("cos", emb.cos(), persistent=False)
+        self.register_buffer("sin", emb.sin(), persistent=False)
 
-        if self.d_model%2 != 0:
-            raise Exception("d_model should have an even value")
-
-        pos_encoding = self._get_pos_encoding() # (max_seq_len,d_model)
-
-        self.register_buffer("pos_encoding",pos_encoding)
+    def forward(self, seq_len: int):
+        return self.cos[:seq_len], self.sin[:seq_len]
 
 
-    def forward(self,x):
-        # x has shape (batch_size,seq_len,d_model)
-        _,seq_len,_ = x.shape
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    half = x.shape[-1] // 2
+    return torch.cat([-x[..., half:], x[..., :half]], dim=-1)
 
-        return x + self.pos_encoding[0:seq_len,:].unsqueeze(0)
 
-    def _get_pos_encoding(self):
-        
-        pos_encoding = torch.empty(self.max_seq_len,self.d_model)
+def apply_rope(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+    # q, k are (batch, heads, seq, head_dim); cos/sin are (seq, head_dim)
+    cos = cos[None, None, :, :].to(q.dtype)
+    sin = sin[None, None, :, :].to(q.dtype)
+    return q * cos + rotate_half(q) * sin, k * cos + rotate_half(k) * sin
 
-        pos = torch.arange(start=0,end=self.max_seq_len)
-        i   = torch.arange(start=0,end=self.d_model//2)
-        i   = 10000**(2*i/self.d_model)
 
-        pos_encoding[:,0::2] = torch.sin( pos.unsqueeze(-1)/i )
-        pos_encoding[:,1::2] = torch.cos( pos.unsqueeze(-1)/i )
+class Attention(nn.Module):
+    """Multi-head causal self-attention via F.scaled_dot_product_attention."""
 
-        return pos_encoding
-
-class MaskedMultiHeadAttn(nn.Module):
-    def __init__(self,config) -> None:
+    def __init__(self, config) -> None:
         super().__init__()
-        self.d_model    = config["d_model"]
-        self.num_heads  = config["num_heads"]
-        self.max_seq_len = config["max_seq_len"]
+        self.d_model = config["d_model"]
+        self.num_heads = config["num_heads"]
+        if self.d_model % self.num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads")
+        self.head_dim = self.d_model // self.num_heads
+        self.dropout = config.get("dropout", 0.0)
 
-        if self.d_model%self.num_heads != 0:
-            raise Exception("d_model is not divisable by num_heads")
+        # bias=False throughout: it buys nothing measurable and costs parameters.
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=False)
+        self.k_proj = nn.Linear(self.d_model, self.d_model, bias=False)
+        self.v_proj = nn.Linear(self.d_model, self.d_model, bias=False)
+        self.out_proj = nn.Linear(self.d_model, self.d_model, bias=False)
 
-        self.d_k = self.d_model//self.num_heads
+    def forward(self, x, cos=None, sin=None, attn_mask=None, past_kv=None, use_cache=False):
+        batch, seq_len, _ = x.shape
 
-        self.k_proj = nn.Linear(self.d_model,self.d_model)
-        self.q_proj = nn.Linear(self.d_model,self.d_model)
-        self.v_proj = nn.Linear(self.d_model,self.d_model)
+        def split(proj):
+            return proj(x).view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        self.out_proj = nn.Linear(self.d_model,self.d_model)
+        q, k, v = split(self.q_proj), split(self.k_proj), split(self.v_proj)
+        if cos is not None:
+            q, k = apply_rope(q, k, cos, sin)
 
-        causal_mask = torch.tril(torch.ones(self.max_seq_len,self.max_seq_len),diagonal=0).bool() 
-        self.register_buffer("causal_mask",causal_mask)
+        if past_kv is not None:
+            k = torch.cat([past_kv[0], k], dim=2)
+            v = torch.cat([past_kv[1], v], dim=2)
+        present = (k, v) if use_cache else None
 
-    def forward(self,x,attention_mask):
-        # x and has the shape:          (batch_size,seq_len,d_model)
-        # attention mask has the shape: (batch_size,seq_len)
-        batch_size,seq_len,_ = x.shape
-        
-        K = self.k_proj(x)                  #(batch_size,seq_len,d_model) 
-        Q = self.q_proj(x)                  #(batch_size,seq_len,d_model) 
-        V = self.v_proj(x)                  #(batch_size,seq_len,d_model) 
+        # Three cases:
+        #   prefill / training  q_len == k_len  -> is_causal handles the mask, no tensor built
+        #   cached decode       q_len == 1      -> the single query may attend to *every* cached
+        #                                          key, so no mask at all. is_causal would be
+        #                                          wrong here: SDPA aligns a causal mask to the
+        #                                          top-left, so it would let the token see only
+        #                                          position 0.
+        #   explicit mask       padding present -> use it as given
+        if attn_mask is None and seq_len == k.shape[2]:
+            out = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+            )
+        else:
+            out = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask,
+                dropout_p=self.dropout if self.training else 0.0, is_causal=False,
+            )
+        out = out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
+        out = self.out_proj(out)
+        return (out, present) if use_cache else out
 
-        K = K.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
-        Q = Q.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
-        V = V.view(batch_size,seq_len,self.num_heads,self.d_k).transpose(1,2)      #(batch_size,num_heads,seq_len,d_k)
 
-        attn_score = K@Q.transpose(-1,-2)/self.d_k**0.5                   # (batch_size,num_heads,seq_len,seq_len)
-        final_mask = attention_mask.unsqueeze(1).unsqueeze(1).bool() & self.causal_mask[0:seq_len,0:seq_len].unsqueeze(0).unsqueeze(0)
-        attn_score = attn_score.masked_fill(torch.logical_not(final_mask),value=float("-inf"))
-        attn_score = torch.nn.functional.softmax(attn_score,dim=-1)
+class SwiGLU(nn.Module):
+    def __init__(self, config) -> None:
+        super().__init__()
+        d_model = config["d_model"]
+        hidden = config.get("mlp_hidden") or swiglu_hidden_dim(d_model)
+        self.gate_proj = nn.Linear(d_model, hidden, bias=False)
+        self.up_proj = nn.Linear(d_model, hidden, bias=False)
+        self.down_proj = nn.Linear(hidden, d_model, bias=False)
 
-        x = attn_score@V            #(batch_size,num_heads,seq_len,d_k)
-
-        x = x.transpose(1,2).contiguous().view(batch_size,seq_len,self.d_model)     # (batch_size,seq_len,d_model)
-        x = self.out_proj(x)
-
-        return x
+    def forward(self, x):
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self,config) -> None:
+    """Pre-LN block: x + sublayer(norm(x)).
+
+    The residual stream is never normalized in place, so gradients reach the embedding through
+    an unbroken identity path. The deprecated implementation used post-LN — norm(sublayer + x) —
+    which degrades with depth.
+    """
+
+    def __init__(self, config) -> None:
         super().__init__()
-        self.d_model = config["d_model"]
-        
-        self.masked_multihead_attn = MaskedMultiHeadAttn(config)
-        self.norm1 = nn.RMSNorm(self.d_model)
-        self.mlp   = nn.Sequential(
-                nn.Linear(self.d_model,4*self.d_model),
-                nn.GELU(),
-                nn.Linear(4*self.d_model,self.d_model)
-                )
-        self.norm2 = nn.RMSNorm(self.d_model)
+        d_model = config["d_model"]
+        dropout = config.get("dropout", 0.0)
+        self.norm1 = nn.RMSNorm(d_model)
+        self.attn = Attention(config)
+        self.norm2 = nn.RMSNorm(d_model)
+        self.mlp = SwiGLU(config)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self,x,attention_mask):
-        
-        attn_output = self.masked_multihead_attn(x,attention_mask)
-        x = self.norm1(attn_output+x)
+    def forward(self, x, cos=None, sin=None, attn_mask=None, past_kv=None, use_cache=False):
+        attn_out = self.attn(self.norm1(x), cos, sin, attn_mask, past_kv, use_cache)
+        if use_cache:
+            attn_out, present = attn_out
+        x = x + self.dropout(attn_out)
+        x = x + self.dropout(self.mlp(self.norm2(x)))
+        return (x, present) if use_cache else x
 
-        mlp_output = self.mlp(x)
-        x = self.norm2(mlp_output + x)
-
-        return x
 
 class DecoderModel(nn.Module):
-    def __init__(self,config ) -> None:
+    def __init__(self, config) -> None:
         super().__init__()
+        self.config = config
         self.vocab_size = config["vocab_size"]
         self.num_layers = config["num_layers"]
-        self.d_model    = config["d_model"]
-        self.token_embedding = nn.Embedding(self.vocab_size,self.d_model)
-        self.pos_embedding   = PositionalEmbedding(config)
-        self.decoder_layers  = nn.ModuleList( DecoderLayer(config) for _ in range(self.num_layers) ) 
+        self.d_model = config["d_model"]
+        self.num_heads = config["num_heads"]
+        self.max_seq_len = config.get("max_seq_len", 1024)
+        self.head_dim = self.d_model // self.num_heads
 
-    def forward(self,input_ids,attention_mask):
-        # input_ids has shape        (batch_size,seq_len)
-        # atteniton_mask has shape   (batch_size,seq_len)
-        x = self.token_embedding(input_ids)     # (batch_size,seq_len,d_model)
-        x = self.pos_embedding(x)               # (batch_size,seq_len,d_model)
-        for layer in self.decoder_layers:
-            x = layer(x,attention_mask)         # (batch_size,seq_len,d_model)
-        return x
-    
-    def get_model_stats(self,verbose=True):
-        param_size = 0
-        num_params = 0
-        for param in self.parameters():
-            param_size += param.nelement() * param.element_size()
-            num_params += param.nelement()
-        buffer_size = 0
-        num_buffers = 0
-        for buffer in self.buffers():
-            buffer_size += buffer.nelement() * buffer.element_size()
-            num_buffers += buffer.nelement()
+        self.token_embedding = nn.Embedding(self.vocab_size, self.d_model)
+        self.embed_dropout = nn.Dropout(config.get("dropout", 0.0))
+        self.rotary = RotaryEmbedding(
+            self.head_dim, self.max_seq_len, config.get("rope_base", 10000.0)
+        )
+        self.decoder_layers = nn.ModuleList(
+            DecoderLayer(config) for _ in range(self.num_layers)
+        )
+        # Missing entirely in the deprecated model. Under pre-LN the residual stream reaches the
+        # head unnormalized without it, and logit scale drifts with depth.
+        self.final_norm = nn.RMSNorm(self.d_model)
 
+    def build_attn_mask(self, attention_mask, seq_len, device, dtype):
+        """Combine key padding with causality into a boolean SDPA mask.
+
+        Returns None when there is nothing to mask, which lets SDPA take the flash path.
+        """
+        if attention_mask is None:
+            return None
+        causal = torch.ones(seq_len, seq_len, dtype=torch.bool, device=device).tril()
+        key_pad = attention_mask.bool()[:, None, None, :]          # (batch,1,1,seq)
+        mask = causal[None, None, :, :] & key_pad
+        # Always allow the diagonal. A padding row would otherwise be fully masked, and softmax
+        # over all -inf yields NaN which then propagates through the whole batch. Those rows are
+        # discarded downstream, so letting them attend to themselves is free.
+        eye = torch.eye(seq_len, dtype=torch.bool, device=device)[None, None, :, :]
+        return mask | eye
+
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False):
+        _, seq_len = input_ids.shape
+        x = self.embed_dropout(self.token_embedding(input_ids))
+
+        # With a cache the new tokens sit *after* everything already cached, so RoPE has to be
+        # read at the absolute positions rather than from 0 — otherwise every generated token
+        # would be encoded as if it were at the start of the sequence.
+        past_len = past_key_values[0][0].shape[2] if past_key_values else 0
+        cos, sin = self.rotary(past_len + seq_len)
+        cos, sin = cos[past_len:], sin[past_len:]
+
+        attn_mask = self.build_attn_mask(attention_mask, seq_len, x.device, x.dtype)
+        presents = [] if use_cache else None
+        for i, layer in enumerate(self.decoder_layers):
+            past = past_key_values[i] if past_key_values else None
+            out = layer(x, cos, sin, attn_mask, past, use_cache)
+            if use_cache:
+                x, present = out
+                presents.append(present)
+            else:
+                x = out
+        x = self.final_norm(x)
+        return (x, presents) if use_cache else x
+
+    def get_model_stats(self, verbose=True):
+        param_size = sum(p.nelement() * p.element_size() for p in self.parameters())
+        num_params = sum(p.nelement() for p in self.parameters())
+        buffer_size = sum(b.nelement() * b.element_size() for b in self.buffers())
+        num_buffers = sum(b.nelement() for b in self.buffers())
+        embedding_params = self.token_embedding.weight.nelement()
+
+        stats = {
+            "num_params": num_params,
+            "num_params_non_embedding": num_params - embedding_params,
+            "num_buffers": num_buffers,
+            "param size (MB)": param_size / 1024**2,
+            "buffer size (MB)": buffer_size / 1024**2,
+        }
         if verbose:
-            print("-"*20)
-            print("number of parameters   : ", num_params)
-            print("number of buffers      :", num_buffers)
-            print("total param size in MB :", param_size/1024**2)
-            print("total buffer size in MB:", buffer_size/1024**2)
-            print("-"*20)
+            print("-" * 20)
+            for key, value in stats.items():
+                print(f"{key:<26}: {value:,.2f}" if isinstance(value, float) else f"{key:<26}: {value:,}")
+            print("-" * 20)
+        return stats
 
-        return {
-                "num_params":num_params,
-                "num_buffers":num_buffers,
-                "param size (MB)": param_size/1024**2,
-                "buffer size (MB)": buffer_size/1024**2
-                }
-
-    def profile_model(self,dummy_input_train,dummy_input_val):
-        device = "cpu"
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.mps.is_available():
-            device = "mps"
-        self.to(device)
-        dummy_input_train = {k:v.to(device) for k,v in dummy_input_train.items()}
-        dummy_input_val= {k:v.to(device) for k,v in dummy_input_val.items()}
-
-        torch.cuda.reset_peak_memory_stats()
-
-        with torch.no_grad():
-            with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],profile_memory=True,record_shapes=True) as prof:
-                self(**dummy_input_val)
-
-        print("eval peak:", torch.cuda.max_memory_allocated()/1024**3)
-        torch.cuda.reset_peak_memory_stats()
-           
-        val_profile = prof.key_averages().table(sort_by="self_cuda_memory_usage")
-
-        with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA],profile_memory=True,record_shapes=True) as prof:
-            self(**dummy_input_train)
-
-        print("train peak:", torch.cuda.max_memory_allocated()/1024**3)
-        train_profile = prof.key_averages().table(sort_by="self_cuda_memory_usage")
-
-        return train_profile,val_profile
 
 class DecoderLMHeadModel(DecoderModel):
     def __init__(self, config) -> None:
         super().__init__(config)
-        self.head = nn.Linear(self.d_model,self.vocab_size)
+        self.head = nn.Linear(self.d_model, self.vocab_size, bias=False)
+        if config.get("tie_embeddings", True):
+            # One matrix serving both directions. Saves 22% of the parameters at Stage-B size,
+            # and small models generally benefit from the shared representation.
+            self.head.weight = self.token_embedding.weight
 
-    def forward(self,input_ids,attention_mask,labels=None,chunk_size=10,ignore_index=None):
+        self.apply(self._init_weights)
+        # Residual projections are scaled down so that summing num_layers residual branches does
+        # not inflate the variance of the residual stream.
+        residual_scale = 1.0 / math.sqrt(2 * self.num_layers)
+        for name, param in self.named_parameters():
+            if name.endswith("out_proj.weight") or name.endswith("down_proj.weight"):
+                torch.nn.init.normal_(param, mean=0.0, std=0.02 * residual_scale)
 
-        hidden_states = super().forward(input_ids,attention_mask) # shape is (batch_size,seq_len,d_model)
-        if labels == None: 
-            return self.head(hidden_states)# shape is (batch_size,seq_len,vocab_size)
-        else: 
-            loss = self.chunked_lm_head(hidden_states.view(-1,self.d_model),labels.view(-1),chunk_size,ignore_index)
-            return loss
+    @staticmethod
+    def _init_weights(module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def chunked_lm_head(self,hidden_states,labels,chunk_size,ignore_index):
-        # TODO: verify this implementation
-        # hidden_states has shape (batch_size*seq_len,d_model)
-        # labels has shape (batch_size*seq_len)
-        num_tokens,_ = hidden_states.shape
-        total_tokens = (labels != ignore_index).sum()
-        total_loss = 0
-        for i in range(0,num_tokens,chunk_size):
-            print("running on chunk i",i)
-            hidden_states_chunk = hidden_states[i:i+chunk_size,:] # has shape (chunk_size,d_model)
-            labels_chunk        = labels[i:i+chunk_size]
-            output_chunk = self.head(hidden_states_chunk) # has shape (chunk_size,vocab_size)
-            loss_chunk = torch.nn.functional.cross_entropy(output_chunk,labels_chunk,ignore_index=ignore_index,reduction="sum")
-            print("loss_chunk : ",loss_chunk)
-            loss = loss_chunk/total_tokens
-            print("loss : ",loss)
-            loss.backward(retain_graph=True)
-            total_loss += loss.item()
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False):
+        out = super().forward(input_ids, attention_mask, past_key_values, use_cache)
+        if use_cache:
+            hidden_states, presents = out
+            return self.head(hidden_states), presents
+        return self.head(out)
 
-        return total_loss
+    @torch.no_grad()
+    def generate(self, input_ids, max_new_tokens=64, temperature=1.0, top_k=None, top_p=None,
+                 eos_token_id=None):
+        """Sample a continuation, reusing the KV cache.
+
+        Without the cache each new token re-runs attention over the whole prefix, making
+        generation quadratic — which is why sampling used to be too expensive to log often.
+        """
+        self.eval()
+        past = None
+        generated = input_ids
+        step_input = input_ids
+
+        for _ in range(max_new_tokens):
+            logits, past = self(step_input, past_key_values=past, use_cache=True)
+            logits = logits[:, -1, :].float()
+
+            if temperature <= 0:
+                next_token = logits.argmax(dim=-1, keepdim=True)
+            else:
+                logits = logits / temperature
+                if top_k is not None:
+                    kth = logits.topk(min(top_k, logits.shape[-1]), dim=-1).values[:, -1:]
+                    logits = logits.masked_fill(logits < kth, float("-inf"))
+                if top_p is not None:
+                    ordered, order = logits.sort(dim=-1, descending=True)
+                    cumulative = ordered.softmax(dim=-1).cumsum(dim=-1)
+                    # keep the first token that crosses the threshold, drop the rest
+                    remove = cumulative - ordered.softmax(dim=-1) > top_p
+                    ordered = ordered.masked_fill(remove, float("-inf"))
+                    logits = ordered.gather(1, order.argsort(dim=-1))
+                next_token = torch.multinomial(logits.softmax(dim=-1), num_samples=1)
+
+            generated = torch.cat([generated, next_token], dim=-1)
+            step_input = next_token          # only the new token goes through the model
+            if eos_token_id is not None and (next_token == eos_token_id).all():
+                break
+
+        return generated
 
     def calc_grad_norms(self):
         grad_norms = {}
         total_sq_norm = 0.0
-        
-        # Track per-layer norms
         for i, layer in enumerate(self.decoder_layers, 1):
-            # Calculate sum of squares for this layer
-            layer_sq_norm = sum(p.grad.detach().pow(2).sum().item() 
-                                for p in layer.parameters() if p.grad is not None)
-            
+            layer_sq_norm = sum(
+                p.grad.detach().pow(2).sum().item()
+                for p in layer.parameters() if p.grad is not None
+            )
             grad_norms[f"layer{i}_grad"] = layer_sq_norm ** 0.5
             total_sq_norm += layer_sq_norm
-    
-        # Handle the head separately
-        head_sq_norm = sum(p.grad.detach().pow(2).sum().item() 
-                           for p in self.head.parameters() if p.grad is not None)
-        
+
+        head_sq_norm = sum(
+            p.grad.detach().pow(2).sum().item()
+            for p in self.head.parameters() if p.grad is not None
+        )
         grad_norms["head_grad"] = head_sq_norm ** 0.5
-        total_sq_norm += head_sq_norm
-    
-        # Final global norm
+        # With tied embeddings the head shares the embedding matrix, so it is already counted.
+        if self.head.weight is not self.token_embedding.weight:
+            total_sq_norm += head_sq_norm
+
         grad_norms["model_grad"] = total_sq_norm ** 0.5
-        
         return grad_norms

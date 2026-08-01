@@ -1,0 +1,102 @@
+# Stage A — pipeline validation run (plan.md Part III).
+#
+# 42M parameters, ~1.5B tokens. The point is not the model: it is to prove the rebuilt tokenizer,
+# packing, decoder and trainer work together, and to measure the throughput that every Stage B
+# estimate depends on, before committing to a 16-hour run.
+
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "stage_a_42m"
+  run_description: "pipeline validation: v2 tokenizer + packed data + SDPA decoder + step trainer"
+
+model:
+  name: "init_decoder"
+  config:
+    d_model: 512
+    num_layers: 8
+    num_heads: 8
+    max_seq_len: 1024
+    dropout: 0.0            # data >> parameters during pretraining
+    tie_embeddings: True
+
+train:
+  seed: 67
+  block_size: 1024
+
+  # 2 GPUs x 16 x 1024 x 8 accum = 262,144 tokens/step, matching plan.md's token budget.
+  # On one GPU the same config gives half that, so halve max_steps for the same token count.
+  #
+  # micro_batch is 16, not the 64 originally planned: cross-entropy over a 32k vocab
+  # materializes a (micro_batch * 1024, 32000) logits tensor, and 64 OOMs on a 31 GB card.
+  # Measured throughput is flat from 16 to 48 (354k / 355k / 337k tok/s), so the smaller
+  # micro-batch costs nothing and leaves headroom for DDP's gradient buckets.
+  micro_batch_size: 16
+  grad_accum: 8
+  max_steps: 5700           # 5700 x 262,144 = 1.49B tokens
+
+  bf16: True
+  compile: True             # validate it here, never first on the 16-hour run
+  grad_clip: 1.0
+
+  optimiser:
+    name: "adamw"
+    config:
+      lr: 0.001             # 42M is small enough to take a high peak LR
+      betas: [0.9, 0.95]
+      eps: 1.0e-8
+      weight_decay: 0.1     # applied to matrices only; norms and biases are excluded
+
+  scheduler:
+    warmup_percentage: 0.02
+    min_lr_ratio: 0.1       # floor, not zero
+
+  dataloader:
+    stage: "pretrain"
+
+  val_batch_size: 32
+  val_max_batches: 100      # ~3.3M tokens: a stable estimate without stalling training
+  eval_every: 500
+  checkpoint_every: 500
+  log_every: 10
+
+  # Denominator for the MFU figure. Measured on this machine with a large bf16 matmul, not
+  # taken from the spec sheet: the 5090 reaches 239 TFLOPS, while the widely-quoted 105 TFLOPS
+  # is the FP32-accumulate number and produced an impossible MFU above 100%.
+  # Note the signed exponent: YAML 1.1 parses "239.0e12" as a *string*, not a float.
+  peak_flops_per_gpu: 2.39e+14
+
+# Evaluators run on rank 0 at their own frequencies, in addition to the packed val loss.
+eval:
+  # The metric that tracks the project's goal. Independent of the WhatsApp holdout, which is
+  # self-referential (same people, same topics, same idiolect).
+  flores:
+    freq: 500
+    run_at_0: True
+    split: "DEV"          # DEVTEST is held back for the final number
+    batch_size: 16
+
+  # Primary MMLU variant: scores each answer's text, which a model this size can actually do.
+  mmlu_loglikelihood:
+    freq: 1000
+    run_at_0: True
+    max_examples: 500     # subsampled during training; run the full set at the end
+    batch_size: 16
+
+  # Secondary. Expected to sit near chance until well past this model size.
+  mmlu_letter:
+    freq: 1000
+    run_at_0: True
+    dataloader:
+      batch_size: 32
+      shuffle: False
+
+  generation:
+    freq: 1000
+    run_at_0: False
+    prompts: ["<s>", "<s>الخرطوم هي", "<s>[inst] ما هي عاصمة السودان؟ [/inst]\n"]
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 48
+
+monitor:
+  grad_norm:
+    freq: 50
