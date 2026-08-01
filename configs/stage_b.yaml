@@ -56,6 +56,36 @@ train:
 
   peak_flops_per_gpu: 2.39e+14
 
+# Frequencies are lower than Stage A's: this run is ~6x longer, and at Stage A cadence the
+# eval overhead was ~20% of wall clock. mmlu_letter is the expensive one — it sweeps all 14,455
+# questions — so it runs least often.
+eval:
+  flores:
+    freq: 500             # 19 points across the run; the metric that tracks the actual goal
+    run_at_0: True
+    split: "DEV"          # DEVTEST stays held back for the final number
+    batch_size: 16
+
+  mmlu_loglikelihood:
+    freq: 1000
+    run_at_0: True
+    max_examples: 500
+    batch_size: 16
+
+  mmlu_letter:
+    freq: 2000            # expected to sit near chance at this scale; a regression guard only
+    run_at_0: True
+    dataloader:
+      batch_size: 32
+      shuffle: False
+
+  generation:
+    freq: 1000
+    run_at_0: False
+    prompts: ["<s>", "<s>الخرطوم هي", "<s>[inst] ما هي عاصمة السودان؟ [/inst]\n"]
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 48
+
 monitor:
   grad_norm:
     freq: 50

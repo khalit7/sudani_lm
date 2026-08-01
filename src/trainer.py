@@ -97,8 +97,11 @@ class Trainer:
             # Shapes are constant on the packed path, so this compiles once and never recompiles.
             # Compilation is lazy — it only fails on the first real forward — so trigger it here
             # and fall back to eager rather than let a toolchain problem kill a 16-hour run.
-            candidate = torch.compile(self.model)
             try:
+                # torch.compile() itself is inside the try, not just the trial forward: most
+                # toolchain failures surface lazily on the first forward, but not all of them,
+                # and either way must degrade to eager rather than kill the run.
+                candidate = torch.compile(self.model)
                 self._trial_forward(candidate)
                 self.model = candidate
                 self.compiled = True
