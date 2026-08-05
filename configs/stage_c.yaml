@@ -1,0 +1,104 @@
+# Stage C — Sudanese continued pretraining (plan.md Part III).
+#
+# Starts from Stage B's weights. This is where the model stops being an MSA model: Stage B's
+# corpus was essentially all MSA, and its Flores gap plateaued at 220 (Sudanese ppl 288 vs MSA
+# 68) with the decline flattening. That gap is what this stage attacks.
+#
+# Run with --init-from, not --resume: only the weights carry over. Step, optimiser moments and
+# data cursor all start fresh, because this is different data on a different schedule.
+#
+#   torchrun --nproc_per_node=2 train.py --config configs/stage_c.yaml \
+#     --init-from checkpoints/sudani_llm_pretraining/stage_b_110m/best.pt
+
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "stage_c"
+  run_description: "Stage C: dialect exposure from low-owner-share chats + Sudanese + 40% Arabic replay"
+
+model:
+  name: "init_decoder"
+  config:
+    d_model: 768
+    num_layers: 12
+    num_heads: 12
+    max_seq_len: 1024
+    dropout: 0.0
+    tie_embeddings: True
+
+train:
+  seed: 67
+  block_size: 1024
+
+  # 2 GPUs x 16 x 1024 x 4 accum = 131,072 tokens/step.
+  # The stage_c pack holds 14.52M tokens, so 330 steps is ~3 epochs over it.
+  micro_batch_size: 16
+  grad_accum: 4
+  max_steps: 330
+
+  bf16: True
+  compile: True
+  grad_clip: 1.0
+
+  optimiser:
+    name: "adamw"
+    config:
+      lr: 0.00006          # 10% of Stage B's peak: adapting, not re-learning
+      betas: [0.9, 0.95]
+      eps: 1.0e-8
+      weight_decay: 0.1
+
+  scheduler:
+    warmup_percentage: 0.05
+    min_lr_ratio: 0.1
+
+  dataloader:
+    stage: "stage_c"
+
+  val_batch_size: 16
+  val_max_batches: 25      # the cpt val split is only 405k tokens
+  eval_every: 25
+  checkpoint_every: 25
+  log_every: 10
+
+  peak_flops_per_gpu: 2.39e+14
+
+# The two Sudanese metrics are deliberately paired. chat_holdout measures the actual deliverable
+# but is self-referential — same people, same idiolect as training. Flores is unrelated Sudanese
+# text, so it catches the case where the model memorised contacts instead of learning dialect.
+# Arabic MMLU is the forgetting guard: it must not collapse while the dialect metrics improve.
+eval:
+  owner_reply:
+    freq: 25
+    run_at_0: True
+    max_examples: 300
+
+  chat_holdout:
+    freq: 25
+    run_at_0: True
+    max_examples: 400
+
+  flores:
+    freq: 25
+    run_at_0: True
+    split: "DEV"
+    batch_size: 16
+
+  mmlu_loglikelihood:
+    freq: 100
+    run_at_0: True
+    max_examples: 500
+    batch_size: 16
+
+  generation:
+    freq: 100
+    run_at_0: True
+    prompts:
+      - "<s><|conv|><|turn|>Mukh: كيف الحال يا زول؟<|end|><|turn|>ME:"
+      - "<s><|conv|><|turn|>ME: شنو الاخبار<|end|>"
+      - "<s>الخرطوم هي"
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 48
+
+monitor:
+  grad_norm:
+    freq: 25

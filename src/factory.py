@@ -115,10 +115,12 @@ class Factory:
         Returns [] when the section is absent, so a pure-throughput run needs no eval config.
         """
         from src.evaluator import (
+            ChatHoldoutEvaluator,
             FloresPerplexityEvaluator,
             GenerationEvaluator,
             MMLULetterEvaluator,
             MMLULoglikelihoodEvaluator,
+            OwnerReplyEvaluator,
         )
 
         evaluators = []
@@ -142,6 +144,12 @@ class Factory:
                     dataloader, frequency=frequency, run_at_0=run_at_0))
             elif name == "flores":
                 evaluators.append(FloresPerplexityEvaluator(
+                    frequency=frequency, run_at_0=run_at_0, **cfg))
+            elif name == "owner_reply":
+                evaluators.append(OwnerReplyEvaluator(
+                    frequency=frequency, run_at_0=run_at_0, **cfg))
+            elif name == "chat_holdout":
+                evaluators.append(ChatHoldoutEvaluator(
                     frequency=frequency, run_at_0=run_at_0, **cfg))
             elif name == "generation":
                 evaluators.append(GenerationEvaluator(
