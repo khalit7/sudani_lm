@@ -285,12 +285,21 @@ class DecoderLMHeadModel(DecoderModel):
 
     @torch.no_grad()
     def generate(self, input_ids, max_new_tokens=64, temperature=1.0, top_k=None, top_p=None,
-                 eos_token_id=None):
+                 eos_token_id=None, stop_token_ids=None):
         """Sample a continuation, reusing the KV cache.
 
         Without the cache each new token re-runs attention over the whole prefix, making
         generation quadratic — which is why sampling used to be too expensive to log often.
+
+        `stop_token_ids` accepts several terminators. A chat turn ends at `<|end|>`, but the
+        model may also emit `</s>` to close the conversation, and stopping on only one of them
+        leaves the other running to max_new_tokens.
         """
+        stops = set()
+        if eos_token_id is not None:
+            stops.add(int(eos_token_id))
+        if stop_token_ids:
+            stops.update(int(t) for t in stop_token_ids)
         self.eval()
         past = None
         generated = input_ids
@@ -318,7 +327,7 @@ class DecoderLMHeadModel(DecoderModel):
 
             generated = torch.cat([generated, next_token], dim=-1)
             step_input = next_token          # only the new token goes through the model
-            if eos_token_id is not None and (next_token == eos_token_id).all():
+            if stops and all(int(t) in stops for t in next_token.flatten()):
                 break
 
         return generated
