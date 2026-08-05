@@ -44,7 +44,8 @@ def setup_distributed():
 
 
 class Trainer:
-    def __init__(self, config, resume_from: str | None = None) -> None:
+    def __init__(self, config, resume_from: str | None = None,
+                 init_from: str | None = None) -> None:
         self.config = config
         self.rank, self.local_rank, self.world_size, self.distributed = setup_distributed()
         self.is_main = self.rank == 0
@@ -121,6 +122,8 @@ class Trainer:
 
         self.step = 0
         self.best_val_loss = float("inf")
+        if init_from:
+            self._init_from_checkpoint(init_from)
         if resume_from:
             self._load_checkpoint(resume_from)
 
@@ -227,8 +230,11 @@ class Trainer:
                     # No explicit .float() here: autocast already runs cross_entropy in fp32
                     # internally, and materializing an fp32 copy of a
                     # (micro_batch * block, 32000) tensor costs 8+ GB on its own.
+                    # ignore_index skips positions an SFT pack masked out (the owner's replies
+                    # are scored, everything else is context). On a CPT pack nothing is masked
+                    # and this is a no-op.
                     loss = F.cross_entropy(
-                        logits.view(-1, self.vocab_size), labels.reshape(-1)
+                        logits.view(-1, self.vocab_size), labels.reshape(-1), ignore_index=-100
                     )
                 (loss / self.grad_accum).backward()
                 accum_loss += loss.detach() / self.grad_accum
@@ -298,10 +304,11 @@ class Trainer:
                 # summed, then divided by the true token count — a mean of per-batch means would
                 # weight batches equally regardless of how many tokens they carry
                 batch_loss = F.cross_entropy(
-                    logits.view(-1, self.vocab_size), labels.reshape(-1), reduction="sum"
+                    logits.view(-1, self.vocab_size), labels.reshape(-1),
+                    ignore_index=-100, reduction="sum"
                 )
             total_loss += batch_loss.float()
-            total_tokens += labels.numel()
+            total_tokens += int((labels != -100).sum().item())
 
         if self.distributed:
             dist.all_reduce(total_loss)
@@ -378,6 +385,25 @@ class Trainer:
         tmp = self.checkpoint_dir / f".{name}.tmp"
         torch.save(payload, tmp)
         tmp.rename(self.checkpoint_dir / name)
+
+    def _init_from_checkpoint(self, path: str) -> None:
+        """Start a new stage from a previous stage's weights.
+
+        Distinct from --resume: this takes *only* the parameters. Step counter, optimiser
+        moments, LR schedule and data cursor all start fresh, because the next stage trains on
+        different data with a different schedule. Carrying the optimiser state across would
+        apply Stage B's Adam moments to Stage C's gradients, and carrying the step would place
+        the run at the end of a cosine decay it never ran.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        state = checkpoint["model_state_dict"]
+        incompatible = self.raw_model.load_state_dict(state, strict=False)
+        if self.is_main:
+            print(f"initialised from {path} (step {checkpoint.get('step')}, "
+                  f"val {checkpoint.get('best_val_loss', float('nan')):.4f})", flush=True)
+            if incompatible.missing_keys or incompatible.unexpected_keys:
+                print(f"  WARNING mismatched keys: missing={incompatible.missing_keys[:5]} "
+                      f"unexpected={incompatible.unexpected_keys[:5]}", flush=True)
 
     def _load_checkpoint(self, path: str) -> None:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)

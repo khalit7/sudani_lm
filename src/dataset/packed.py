@@ -35,6 +35,16 @@ class PackedDataset(Dataset):
         if self.n_blocks < 1:
             raise ValueError(f"{self.path} holds {len(self.tokens)} tokens, too few for one block")
 
+        # An SFT pack ships a parallel uint8 mask marking which tokens are scored. When absent
+        # every position is scored, which is the continued-pretraining case.
+        mask_path = self.path.with_suffix(".mask")
+        self.mask = np.memmap(mask_path, dtype=np.uint8, mode="r") if mask_path.exists() else None
+        if self.mask is not None and len(self.mask) != len(self.tokens):
+            raise ValueError(
+                f"{mask_path} has {len(self.mask)} flags but {self.path} has "
+                f"{len(self.tokens)} tokens — the pack is inconsistent"
+            )
+
     def __len__(self) -> int:
         return self.n_blocks
 
@@ -44,7 +54,15 @@ class PackedDataset(Dataset):
         # uint16 keeps the file small but torch embeddings index with int64, so cast the slice
         # — never the whole file.
         window = torch.from_numpy(window.astype(np.int64))
-        return window[:-1], window[1:]
+        inputs, labels = window[:-1], window[1:].clone()
+        if self.mask is not None:
+            # The mask is aligned to tokens; labels are tokens shifted by one, so the flag that
+            # governs label j is mask[j+1].
+            keep = torch.from_numpy(
+                np.asarray(self.mask[start + 1 : start + self.block_size + 1], dtype=np.uint8)
+            ).bool()
+            labels = labels.masked_fill(~keep, -100)
+        return inputs, labels
 
 
 class PackedDatasetModule(BaseDatasetModule):

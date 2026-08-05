@@ -5,15 +5,31 @@
 This file is the single reference for every dataset in this repository: what it is, where it came
 from, where it lives on disk, how big it is, and which training stage consumes it.
 
-The project trains a Sudanese-Arabic chat model from scratch in four stages — Arabic pretraining →
-Sudanese continued pretraining → chat SFT → evaluation. Each dataset below is assigned to exactly
-one of those roles, except the WhatsApp export, which is deliberately used twice (as raw text for
-continued pretraining and in turn format for SFT).
+The project trains a Sudanese-Arabic chat model from scratch. **The pipeline is four stages, and
+every model and config off that path has been deleted:**
+
+| stage | config | data | what it does |
+|---|---|---|---|
+| **A** smoke test | `configs/stage_a.yaml` | `data/packed/pretrain/` | 42M params, 1.5B tokens — validates the pipeline before the long run |
+| **B** pretraining | `configs/stage_b.yaml` | `data/packed/pretrain/` | 110M params, 5B tokens |
+| **C** continued pretraining | `configs/stage_c.yaml` | `data/packed/stage_c/` | **all** chat + Sudanese ×3 + 40% Arabic replay, loss on every token |
+| **D** style SFT | `configs/stage_d.yaml` | `data/packed/stage_d/` | owner-heavy chats, **loss on the owner's replies only** → **final model** |
+
+How C and D divide the chat corpus was settled by ablation (`plan.md`, *Ablation: how should C and
+D divide the chat corpus?*): Stage C must see the **whole** chat corpus — every variant that
+reserved chat for D was worse at both ends — and Stage D earns its place only because its loss is
+**masked**, which makes it a different gradient rather than more epochs.
+
+The `Role` column below records what each dataset is *actually* used for — which, for SmolKalam and
+InstAr-500k, is nothing. Both are kept on disk (4.4 GB combined) rather than deleted; the reason
+each went unused is in its own section, and both would matter again if the project acquires new
+supervision.
 
 Every figure here was measured on the local copy, not copied from a dataset card. Row counts are
-exact. **Token counts are measured with the current 8k SentencePiece tokenizer in
-`tokenizers/init_tokenizer/`** — treat them as relative, not absolute: the planned 32k tokenizer
-will reduce them roughly 15–25%, and by more than that on Latin-script text. ArabicWeb24's token
+exact. **Token counts were measured with the 8k tokenizer in `tokenizers/init_tokenizer/`, which
+has since been replaced by `tokenizers/v2_32k/`** — the v2 tokenizer compresses ~15–25% better, so
+treat these as relative. Measured against v2 the ArabicWeb24 half is 13.49B rather than the 17.0B
+implied here. ArabicWeb24's token
 count is derived from an exact sum of the corpus's own `metadata.token_count` scaled by a measured
 1.190 calibration factor to our tokenizer; all others are exact counts over the full text.
 
@@ -33,15 +49,15 @@ Keep this file current when a dataset is added, removed, or re-scoped.
 
 | Dataset | Role | Local path | Tokens | Size (MB) | License |
 |---|---|---|---|---|---|
-| [ArabicWeb24](https://huggingface.co/datasets/lightonai/ArabicWeb24) | Pretraining | `data/raw/arabicweb24/` | **33.9B** | 189,378 | ODC-BY |
-| [SmolKalam](https://huggingface.co/datasets/AdaMLLab/SmolKalam-Arabic-Conversational-SFT) | Conversational SFT replay | `data/raw/smolkalam/` | **1.62B** | 3,366 | Apache-2.0 |
-| [InstAr-500k](https://huggingface.co/datasets/ClusterlabAi/InstAr-500k) | Instruction tuning | `data/raw/instar500k/` | **147.2M** | 1,043 | Apache-2.0 |
-| WhatsApp export (personal) | Continued pretraining + chat SFT | `data/raw/whatsapp/` | **10.47M** | 138 | private, not redistributable |
-| [ArabicMMLU](https://huggingface.co/datasets/MBZUAI/ArabicMMLU) | Evaluation | `data/raw/arabicmmlu/` | **556.4K** | 8 | CC-BY-NC-4.0 |
-| [SudSenti](https://github.com/mustafa20999/Sudanese-Arabic-Sentiment-Datasets) | Continued pretraining | `data/raw/sudsenti/` | **381.6K** | 2 | unstated (academic release) |
-| [Sudanese_Dialect_Tweet_Tele](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet_Tele) | Continued pretraining | `data/raw/sudanese_tweets_tele/` | **204.0K** | 1 | unstated |
-| [Sudanese_Flores](https://huggingface.co/datasets/McGill-NLP/Sudanese_Flores) | Evaluation | `data/raw/sudanese_flores/` | **140.9K** | 1 | unstated (FLORES derivative) |
-| [Sudanese_Dialect_Tweet](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet) | Continued pretraining | `data/raw/sudanese_tweets/` | **50.0K** | 1 | unstated |
+| [ArabicWeb24](https://huggingface.co/datasets/lightonai/ArabicWeb24) | **Stages A & B** pretraining (5B of 13.49B) **+ 40% replay in Stage C** | `data/raw/arabicweb24/` | **33.9B** | 189,378 | ODC-BY |
+| [SmolKalam](https://huggingface.co/datasets/AdaMLLab/SmolKalam-Arabic-Conversational-SFT) | ⚠️ **not used** — only fed the SFT stage the ablation dropped | `data/raw/smolkalam/` | **1.62B** | 3,366 | Apache-2.0 |
+| [InstAr-500k](https://huggingface.co/datasets/ClusterlabAi/InstAr-500k) | ⚠️ **not used** — never entered any packed stage | `data/raw/instar500k/` | **147.2M** | 1,043 | Apache-2.0 |
+| WhatsApp export (personal) | **Stage C** (all of it) **and Stage D** (owner-heavy chats, masked); held-out chats are the main metric | `data/raw/whatsapp/` | **10.47M** | 138 | private, not redistributable |
+| [ArabicMMLU](https://huggingface.co/datasets/MBZUAI/ArabicMMLU) | Eval — MSA forgetting guard in Stages C/D | `data/raw/arabicmmlu/` | **556.4K** | 8 | CC-BY-NC-4.0 |
+| [SudSenti](https://github.com/mustafa20999/Sudanese-Arabic-Sentiment-Datasets) | **Stage C**, upsampled ×3 | `data/raw/sudsenti/` | **381.6K** | 2 | unstated (academic release) |
+| [Sudanese_Dialect_Tweet_Tele](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet_Tele) | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets_tele/` | **204.0K** | 1 | unstated |
+| [Sudanese_Flores](https://huggingface.co/datasets/McGill-NLP/Sudanese_Flores) | Eval — independent Sudanese signal (DEV tracked; DEVTEST unused, held back) | `data/raw/sudanese_flores/` | **140.9K** | 1 | unstated (FLORES derivative) |
+| [Sudanese_Dialect_Tweet](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet) | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets/` | **50.0K** | 1 | unstated |
 
 **Total on disk: 193,936 MB ≈ 189.4 GB** (`data/raw/`), holding **≈35.7B tokens**.
 
@@ -52,7 +68,9 @@ plus the personal chat export — is **11.1M tokens**, or 0.03% of the total.
 
 ## ArabicWeb24
 
-- **Role:** Pretraining · **Path:** `data/raw/arabicweb24/` · **Tokens:** 33.9B · **Size:** 189,378 MB
+- **Role:** **Stages A and B** pretraining — 5B tokens drawn from the 13.49B kept half — **plus
+  the 40% Arabic replay in Stage C**, sampled directly from `data/packed/pretrain/train.bin` so replay
+  comes from exactly the distribution the base model saw · **Path:** `data/raw/arabicweb24/` · **Tokens:** 33.9B · **Size:** 189,378 MB
 - **License:** ODC-BY · **Source:** https://huggingface.co/datasets/lightonai/ArabicWeb24
 
 Arabic-only web crawl, filtered and deduplicated by LightOn, released as 38,159,291 documents across
@@ -75,7 +93,7 @@ exceed 1024 tokens and the maximum is 20,505.
 
 ## SmolKalam
 
-- **Role:** Conversational SFT replay · **Path:** `data/raw/smolkalam/` · **Tokens:** 1.62B · **Size:** 3,366 MB
+- **Role:** ⚠️ **not used in the final pipeline** · **Path:** `data/raw/smolkalam/` · **Tokens:** 1.62B · **Size:** 3,366 MB
 - **License:** Apache-2.0 · **Source:** https://huggingface.co/datasets/AdaMLLab/SmolKalam-Arabic-Conversational-SFT
 
 Multi-turn Arabic conversations produced by ensemble machine translation of
@@ -90,8 +108,14 @@ here — 1,117,451 rows:** `smol_magpie_ultra` (406,843), `OpenHermes_2.5` (384,
 tool-calling, table and long-context configs were dropped: they teach capabilities a 110M model will
 not have, and the `LongAlign_*` sets carry 64k–131k-token contexts against a 1024-token model.
 
-It is machine-translated MSA, so the register is stiff and translationese. It is used for turn-taking
-*structure*, not style, and the chat SFT stage consumes well under 1% of it. Note that some configs
+It is machine-translated MSA, so the register is stiff and translationese. It was intended to supply
+turn-taking *structure*, not style.
+
+**Why it ended up unused.** It was accepted and trimmed specifically to feed a chat-SFT stage. The
+ablation in `plan.md` then found that stage makes the model worse — and, counter-intuitively, that
+*removing* SmolKalam made it worse still (Flores Sudanese 338 vs 311), because the off-distribution
+replay was regularising against chat overfitting. So it was helping, inside a stage that should not
+exist. Kept on disk: it is the obvious replay source if a future stage earns its place. Note that some configs
 retain `<think>` reasoning traces in the assistant turn, which must be stripped before use.
 
 **Examples** (one turn pair per config):
@@ -105,7 +129,8 @@ retain `<think>` reasoning traces in the assistant turn, which must be stripped 
 
 ## InstAr-500k
 
-- **Role:** Instruction tuning · **Path:** `data/raw/instar500k/` · **Tokens:** 147.2M · **Size:** 1,043 MB
+- **Role:** ⚠️ **not used in the final pipeline** — never entered any packed stage. Loaders
+  survive at `src/dataset/arabic_ift.py` · **Path:** `data/raw/instar500k/` · **Tokens:** 147.2M · **Size:** 1,043 MB
 - **License:** Apache-2.0 · **Source:** https://huggingface.co/datasets/ClusterlabAi/InstAr-500k
 
 Natively-Arabic instruction-tuning set, 481,281 rows split 433,152 train / 48,129 test. Fields:
@@ -118,6 +143,12 @@ Classification. The remaining sources are `aya_collection` (15%), `arabica_qa` (
 `classical_arabic_poetry` (9%), `cidar`, `aqad`, `101_billion_arabic_dataset`, `abu_el_khair`.
 Every row has a populated `system` field.
 
+**Why it ended up unused.** Planned as the instruction-tuning corpus, then superseded by SmolKalam
+for multi-turn structure, then made moot entirely when the ablation dropped the SFT stage. It fed
+one pre-rebuild run (8k tokenizer, old trainer) and never the current pipeline. Kept on disk: being
+*natively* Arabic rather than translated, it is the better source if a future stage needs idiomatic
+instruction data.
+
 **Examples** (instruction → output, truncated):
 
 1. *(Mixed / Economy&Finance / cidar)* `أجب على السؤال التالي. يجب أن يكون الجواب باللغة العربية ولا تخرج عن سياق الموضوع. أنشئ مثالًا لمراجعة جيدة من العملاء.` → `اشتريت مؤخرًا منتجًا من هذه الشركة ولم أستطع أن أكون أكثر رضاً. كانت جودة المنتج ممتازة ووصل في حالة مثالية.`
@@ -129,7 +160,10 @@ Every row has a populated `system` field.
 
 ## WhatsApp export (personal)
 
-- **Role:** Continued pretraining (raw text) + chat SFT (turn format) · **Path:** `data/raw/whatsapp/`
+- **Role:** **Stage C** — all 32,286 conversations, loss on every token — **and Stage D**, the
+  24,427 conversations from the 339 chats where the owner's token share is ≥20%, with loss masked
+  to the owner's own replies (1.88M of 5.88M tokens scored). Held-out chats are the headline
+  metric · **Path:** `data/raw/whatsapp/`
 - **Tokens:** 10.47M · **Size:** 138 MB · **License:** private, not redistributable
 - **Source:** personal iPhone export via iMazing (see `notes.md`, STEP1)
 
@@ -165,7 +199,7 @@ threads live and reads far more informally than group chat; and fully Latin-scri
 
 ## ArabicMMLU
 
-- **Role:** Evaluation · **Path:** `data/raw/arabicmmlu/` · **Tokens:** 556.4K · **Size:** 8 MB
+- **Role:** Eval only — MSA forgetting guard during Stages C and D · **Path:** `data/raw/arabicmmlu/` · **Tokens:** 556.4K · **Size:** 8 MB
 - **License:** CC-BY-NC-4.0 · **Source:** https://huggingface.co/datasets/MBZUAI/ArabicMMLU
 
 Multiple-choice questions drawn from school and professional exams, 14,455 test rows plus a 120-row
@@ -187,7 +221,7 @@ questions, 3 for 2,121, 2 for 1,874, and 5 for only 340 — so code that assumes
 
 ## SudSenti
 
-- **Role:** Continued pretraining · **Path:** `data/raw/sudsenti/` · **Tokens:** 381.6K · **Size:** 2 MB
+- **Role:** **Stage C**, upsampled ×3 · **Path:** `data/raw/sudsenti/` · **Tokens:** 381.6K · **Size:** 2 MB
 - **License:** unstated (academic release) · **Source:** https://github.com/mustafa20999/Sudanese-Arabic-Sentiment-Datasets
 
 Two Sudanese sentiment corpora, SudSenti2 (2-class) and SudSenti3 (3-class), released alongside
@@ -211,7 +245,7 @@ filtering before it counts as dialect data.
 
 ## Sudanese_Dialect_Tweet_Tele
 
-- **Role:** Continued pretraining · **Path:** `data/raw/sudanese_tweets_tele/` · **Tokens:** 204.0K · **Size:** 1 MB
+- **Role:** **Stage C**, upsampled ×3 · **Path:** `data/raw/sudanese_tweets_tele/` · **Tokens:** 204.0K · **Size:** 1 MB
 - **License:** unstated · **Source:** https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet_Tele
 
 5,346 Telegram posts in Sudanese dialect with a 3-way sentiment `label` (0: 3,754, 1: 851, 2: 741).
@@ -234,7 +268,8 @@ does not occur naturally.
 
 ## Sudanese_Flores
 
-- **Role:** Evaluation · **Path:** `data/raw/sudanese_flores/` · **Tokens:** 140.9K · **Size:** 1 MB
+- **Role:** Eval only — the independent Sudanese signal. **DEV** is tracked during training;
+  **DEVTEST is untouched**, reserved for a final number · **Path:** `data/raw/sudanese_flores/` · **Tokens:** 140.9K · **Size:** 1 MB
 - **License:** unstated (FLORES derivative; upstream is CC-BY-SA) · **Source:** https://huggingface.co/datasets/McGill-NLP/Sudanese_Flores
 
 FLORES sentences translated into Sudanese Arabic and paired with MSA: `DEV.jsonl` (1,012 rows) and
@@ -258,7 +293,7 @@ MSA: note `هسة`, `دي`, `زي`, `خالص`, `لي` below.
 
 ## Sudanese_Dialect_Tweet
 
-- **Role:** Continued pretraining · **Path:** `data/raw/sudanese_tweets/` · **Tokens:** 50.0K · **Size:** 1 MB
+- **Role:** **Stage C**, upsampled ×3 · **Path:** `data/raw/sudanese_tweets/` · **Tokens:** 50.0K · **Size:** 1 MB
 - **License:** unstated · **Source:** https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet
 
 The smallest dataset here: 2,119 Sudanese tweets with three independent sentiment annotations plus a

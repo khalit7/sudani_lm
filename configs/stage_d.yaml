@@ -1,0 +1,104 @@
+# Stage D — chat SFT (plan.md Part III). The stage that produces the deliverable.
+#
+# Stage C taught the model what Sudanese chat looks like; this teaches it to take a turn and
+# reply. Starts from the Stage C v2 weights.
+#
+#   torchrun --nproc_per_node=2 train.py --config configs/stage_d.yaml \
+#     --init-from checkpoints/sudani_llm_pretraining/stage_c/best.pt
+#
+# Judge this stage on conversation quality and held-out chat perplexity, not on Flores: Stage C
+# showed the model learns *the whatsapp chat* far faster than Sudanese in general, so Flores is
+# the wrong instrument for the final call.
+
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "stage_d"
+  run_description: "Stage D: style SFT — loss on the owner's replies only, high-owner-share chats"
+
+model:
+  name: "init_decoder"
+  config:
+    d_model: 768
+    num_layers: 12
+    num_heads: 12
+    max_seq_len: 1024
+    # Dropout on for the first time. ~7.9M chat tokens against a 110M model overfits quickly,
+    # and unlike every earlier stage the data here is finite and cannot be topped up.
+    dropout: 0.1
+    tie_embeddings: True
+
+train:
+  seed: 67
+  block_size: 1024
+
+  # 2 GPUs x 16 x 1024 x 4 accum = 131,072 tokens/step.
+  # The sft pack holds 9.29M tokens, so 180 steps is ~2.5 epochs.
+  micro_batch_size: 16
+  grad_accum: 4
+  max_steps: 90
+
+  bf16: True
+  compile: True
+  grad_clip: 1.0
+
+  optimiser:
+    name: "adamw"
+    config:
+      lr: 0.00003          # half of Stage C's: the smallest, most precious corpus in the project
+      betas: [0.9, 0.95]
+      eps: 1.0e-8
+      weight_decay: 0.1
+
+  scheduler:
+    warmup_percentage: 0.05
+    min_lr_ratio: 0.1
+
+  dataloader:
+    stage: "stage_d"
+
+  val_batch_size: 16
+  val_max_batches: 25
+  # Frequent, because this is where overfitting is expected: watch chat holdout for the turn
+  # upward rather than trusting the step count.
+  eval_every: 10
+  checkpoint_every: 10
+  log_every: 10
+
+  peak_flops_per_gpu: 2.39e+14
+
+eval:
+  owner_reply:
+    freq: 10
+    run_at_0: True
+    max_examples: 300
+
+  chat_holdout:
+    freq: 10
+    run_at_0: True
+    max_examples: 400
+
+  flores:
+    freq: 60
+    run_at_0: True
+    split: "DEV"
+    batch_size: 16
+
+  mmlu_loglikelihood:
+    freq: 60
+    run_at_0: True
+    max_examples: 500
+    batch_size: 16
+
+  generation:
+    freq: 60
+    run_at_0: True
+    prompts:
+      - "<s><|conv|><|turn|>Mukh: كيف الحال يا زول؟<|end|><|turn|>ME:"
+      - "<s><|conv|><|turn|>Reem: انت وين هسه؟<|end|><|turn|>ME:"
+      - "<s><|conv|><|turn|>Ahmed: تعال نشرب شاي<|end|><|turn|>ME:"
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 40
+
+monitor:
+  grad_norm:
+    freq: 25

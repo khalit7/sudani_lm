@@ -253,6 +253,143 @@ class FloresPerplexityEvaluator(Evaluator):
         return math.exp(min(total_nll / max(total_tokens, 1), 20))
 
 
+class ChatHoldoutEvaluator(Evaluator):
+    """Perplexity on held-out WhatsApp conversations — the project's target metric.
+
+    Deliberately paired with Flores rather than used alone. This measures the actual deliverable
+    (can the model model *these* conversations) but it is self-referential: the same people,
+    topics and idiolect as training. Flores is unrelated Sudanese text and catches the case where
+    the model has memorised contacts rather than learned dialect.
+
+    The holdout is by whole chat — see src/preprocessing/whatsapp.py — so no phrase, running joke
+    or nickname crosses the split.
+    """
+
+    name = "chat_holdout"
+
+    def __init__(self, frequency=500, run_at_0=True, batch_size=8, max_examples=400) -> None:
+        super().__init__(frequency, run_at_0)
+        self.path = data_root / "interim" / "whatsapp" / "val.jsonl"
+        self.batch_size = batch_size
+        self.max_examples = max_examples
+        self._texts = None
+
+    def _load(self):
+        if self._texts is None:
+            with open(self.path, encoding="utf-8") as fh:
+                rows = [json.loads(line)["text"] for line in fh]
+            self._texts = rows[: self.max_examples] if self.max_examples else rows
+        return self._texts
+
+    @torch.no_grad()
+    def evaluate(self, model, device, tokenizer) -> dict:
+        pad_id = tokenizer.pad_token_id
+        total_nll = 0.0
+        total_tokens = 0
+        for start in range(0, len(self._load()), self.batch_size):
+            batch = self._load()[start : start + self.batch_size]
+            encoded = [tokenizer.encode(t, add_special_tokens=False)[:1024] for t in batch]
+            encoded = [e for e in encoded if len(e) > 1]
+            if not encoded:
+                continue
+            width = max(len(e) for e in encoded)
+            ids = torch.full((len(encoded), width), pad_id, dtype=torch.long)
+            mask = torch.zeros((len(encoded), width), dtype=torch.long)
+            for i, seq in enumerate(encoded):
+                ids[i, : len(seq)] = torch.tensor(seq)
+                mask[i, : len(seq)] = 1
+            ids, mask = ids.to(device), mask.to(device)
+
+            logits = model(ids, mask).float()
+            valid = mask[:, 1:].reshape(-1) == 1
+            nll = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1])[valid],
+                ids[:, 1:].reshape(-1)[valid],
+                reduction="sum",
+            )
+            total_nll += nll.item()
+            total_tokens += int(valid.sum().item())
+
+        return {"chat/holdout_ppl": math.exp(min(total_nll / max(total_tokens, 1), 20))}
+
+
+class OwnerReplyEvaluator(Evaluator):
+    """Perplexity of the owner's own replies only, conditioned on the real conversation.
+
+    The metric a style-SFT stage should be judged on. `chat_holdout_ppl` scores whole transcripts,
+    so most of its signal is other people's messages — a model trained to produce *the owner's*
+    replies looks worse on it while being better at the actual task. This scores only the tokens
+    the model is supposed to generate.
+    """
+
+    name = "owner_reply"
+
+    def __init__(self, frequency=50, run_at_0=True, batch_size=8, max_examples=400) -> None:
+        super().__init__(frequency, run_at_0)
+        self.path = data_root / "interim" / "whatsapp" / "val.jsonl"
+        self.batch_size = batch_size
+        self.max_examples = max_examples
+        self._texts = None
+
+    def _load(self):
+        if self._texts is None:
+            with open(self.path, encoding="utf-8") as fh:
+                rows = [json.loads(line)["text"] for line in fh]
+            # only conversations the owner actually speaks in can score anything
+            rows = [t for t in rows if "<|turn|>ME:" in t]
+            self._texts = rows[: self.max_examples] if self.max_examples else rows
+        return self._texts
+
+    @torch.no_grad()
+    def evaluate(self, model, device, tokenizer) -> dict:
+        from src.preprocessing.pack import me_loss_mask
+
+        backend = tokenizer.backend_tokenizer if hasattr(tokenizer, "backend_tokenizer") else None
+        pad_id = tokenizer.pad_token_id
+        total_nll = 0.0
+        total_scored = 0
+
+        texts = self._load()
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
+            encoded, masks = [], []
+            for text in batch:
+                ids, mask = me_loss_mask(backend, text)
+                if len(ids) > 1 and mask.sum() > 0:
+                    encoded.append(ids[:1024])
+                    masks.append(mask[:1024])
+            if not encoded:
+                continue
+
+            width = max(len(e) for e in encoded)
+            ids = torch.full((len(encoded), width), pad_id, dtype=torch.long)
+            attn = torch.zeros((len(encoded), width), dtype=torch.long)
+            keep = torch.zeros((len(encoded), width), dtype=torch.bool)
+            for i, (seq, m) in enumerate(zip(encoded, masks)):
+                ids[i, : len(seq)] = torch.tensor(seq)
+                attn[i, : len(seq)] = 1
+                keep[i, : len(m)] = torch.from_numpy(m).bool()
+            ids, attn, keep = ids.to(device), attn.to(device), keep.to(device)
+
+            logits = model(ids, attn).float()
+            # label j lives at token j+1, so the flag governing it is keep[:, 1:]
+            scored = keep[:, 1:].reshape(-1)
+            if not bool(scored.any()):
+                continue
+            nll = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1])[scored],
+                ids[:, 1:].reshape(-1)[scored],
+                reduction="sum",
+            )
+            total_nll += nll.item()
+            total_scored += int(scored.sum().item())
+
+        return {
+            "chat/owner_reply_ppl": math.exp(min(total_nll / max(total_scored, 1), 20)),
+            "chat/owner_reply_tokens": float(total_scored),
+        }
+
+
 # ---------------------------------------------------------------------- generation ----------
 
 class GenerationEvaluator(Evaluator):

@@ -58,7 +58,13 @@ class PackedBatchLoader:
         rows = starts[:, None] + np.arange(self.block_size + 1, dtype=np.int64)
         # uint16 on disk -> int64 for the embedding lookup, cast only for this window
         window = torch.from_numpy(self.dataset.tokens[rows].astype(np.int64))
-        return window[:, :-1], window[:, 1:]
+        inputs, labels = window[:, :-1], window[:, 1:].clone()
+        mask = getattr(self.dataset, "mask", None)
+        if mask is not None:
+            # labels are tokens shifted by one, so label j is governed by mask[j+1]
+            keep = torch.from_numpy(np.asarray(mask[rows[:, 1:]], dtype=np.uint8)).bool()
+            labels = labels.masked_fill(~keep, -100)
+        return inputs, labels
 
     def __iter__(self):
         return self
@@ -115,7 +121,12 @@ class SequentialPackedLoader:
             starts = chunk.astype(np.int64) * self.block_size
             rows = starts[:, None] + np.arange(self.block_size + 1, dtype=np.int64)
             window = torch.from_numpy(self.dataset.tokens[rows].astype(np.int64))
-            yield window[:, :-1], window[:, 1:]
+            inputs, labels = window[:, :-1], window[:, 1:].clone()
+            mask = getattr(self.dataset, "mask", None)
+            if mask is not None:
+                keep = torch.from_numpy(np.asarray(mask[rows[:, 1:]], dtype=np.uint8)).bool()
+                labels = labels.masked_fill(~keep, -100)
+            yield inputs, labels
 
     def __len__(self) -> int:
         n = len(np.arange(len(self.dataset))[self.rank :: self.world_size]) // self.batch_size
