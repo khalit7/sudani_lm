@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -388,6 +389,128 @@ class OwnerReplyEvaluator(Evaluator):
             "chat/owner_reply_ppl": math.exp(min(total_nll / max(total_scored, 1), 20)),
             "chat/owner_reply_tokens": float(total_scored),
         }
+
+
+class JsonlPerplexityEvaluator(Evaluator):
+    """Perplexity over the `text` field of any interim jsonl — one evaluator, many corpora.
+
+    First use: the Lisan holdout (data/interim/sudani/lisan_holdout.jsonl). Unlike the WhatsApp
+    holdout it shares no people with training, and unlike Flores it is native dialect rather
+    than translationese, so it catches "memorised the contacts" and "learned translator
+    Sudanese" at once. Declared in config as:
+
+        lisan_holdout:
+          kind: jsonl_ppl
+          path: data/interim/sudani/lisan_holdout.jsonl
+    """
+
+    def __init__(self, name, path, field="text", frequency=500, run_at_0=True, batch_size=16,
+                 max_examples=None) -> None:
+        super().__init__(frequency, run_at_0)
+        self.name = name
+        self.path = data_root.parent / path if not Path(path).is_absolute() else Path(path)
+        self.field = field
+        self.batch_size = batch_size
+        self.max_examples = max_examples
+        self._texts = None
+
+    def _load(self):
+        if self._texts is None:
+            with open(self.path, encoding="utf-8") as fh:
+                rows = [json.loads(line)[self.field] for line in fh]
+            self._texts = rows[: self.max_examples] if self.max_examples else rows
+        return self._texts
+
+    @torch.no_grad()
+    def evaluate(self, model, device, tokenizer) -> dict:
+        pad_id = tokenizer.pad_token_id
+        total_nll, total_tokens = 0.0, 0
+        texts = self._load()
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
+            encoded = [tokenizer.encode(t, add_special_tokens=False)[:1024] for t in batch]
+            encoded = [e for e in encoded if len(e) > 1]
+            if not encoded:
+                continue
+            width = max(len(e) for e in encoded)
+            ids = torch.full((len(encoded), width), pad_id, dtype=torch.long)
+            mask = torch.zeros((len(encoded), width), dtype=torch.long)
+            for i, seq in enumerate(encoded):
+                ids[i, : len(seq)] = torch.tensor(seq)
+                mask[i, : len(seq)] = 1
+            ids, mask = ids.to(device), mask.to(device)
+
+            logits = model(ids, mask).float()
+            valid = mask[:, 1:].reshape(-1) == 1
+            nll = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1])[valid],
+                ids[:, 1:].reshape(-1)[valid],
+                reduction="sum",
+            )
+            total_nll += nll.item()
+            total_tokens += int(valid.sum().item())
+
+        return {f"{self.name}/ppl": math.exp(min(total_nll / max(total_tokens, 1), 20))}
+
+
+class PerSourceValEvaluator(Evaluator):
+    """Perplexity on each named slice of a manifest-packed val.bin.
+
+    A stage packed from a mixture manifest concatenates several val sources into one stream and
+    records their token boundaries in meta.json. The trainer's blended val loss can improve while
+    one source regresses — with multiple domains in the mix (chat, forum, transcripts, synthetic)
+    that regression is exactly the signal that matters, so each slice gets its own perplexity.
+
+    Blocks are cut per source from its own offset, so a block never straddles two sources.
+    """
+
+    name = "per_source_val"
+
+    def __init__(self, stage, block_size=1024, batch_size=16, max_blocks_per_source=64,
+                 frequency=500, run_at_0=True) -> None:
+        super().__init__(frequency, run_at_0)
+        self.stage_dir = data_root / "packed" / stage
+        self.block_size = block_size
+        self.batch_size = batch_size
+        self.max_blocks_per_source = max_blocks_per_source
+        self._sources = None
+        self._tokens = None
+
+    def _load(self):
+        if self._sources is None:
+            meta = json.loads((self.stage_dir / "meta.json").read_text())
+            self._sources = [s for s in meta.get("val_sources", []) if "start" in s]
+            self._tokens = np.memmap(self.stage_dir / "val.bin", dtype=np.uint16, mode="r")
+        return self._sources, self._tokens
+
+    @torch.no_grad()
+    def evaluate(self, model, device, tokenizer) -> dict:
+        sources, stream = self._load()
+        metrics = {}
+        for source in sources:
+            start, length = source["start"], source["tokens"]
+            n_blocks = (length - 1) // self.block_size
+            if self.max_blocks_per_source:
+                n_blocks = min(n_blocks, self.max_blocks_per_source)
+            if n_blocks < 1:
+                continue
+            total_nll, total_tokens = 0.0, 0
+            for b in range(0, n_blocks, self.batch_size):
+                rows = np.arange(b, min(b + self.batch_size, n_blocks), dtype=np.int64)
+                offsets = start + rows[:, None] * self.block_size + np.arange(
+                    self.block_size + 1, dtype=np.int64)
+                window = torch.from_numpy(stream[offsets].astype(np.int64)).to(device)
+                logits = model(window[:, :-1]).float()
+                nll = F.cross_entropy(
+                    logits.reshape(-1, logits.shape[-1]),
+                    window[:, 1:].reshape(-1),
+                    reduction="sum",
+                )
+                total_nll += nll.item()
+                total_tokens += window[:, 1:].numel()
+            metrics[f"val_source/{source['name']}_ppl"] = math.exp(
+                min(total_nll / max(total_tokens, 1), 20))
+        return metrics
 
 
 # ---------------------------------------------------------------------- generation ----------

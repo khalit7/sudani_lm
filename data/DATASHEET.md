@@ -64,6 +64,22 @@ Keep this file current when a dataset is added, removed, or re-scoped.
 ArabicWeb24 is 97.6% of that footprint. Everything targeting Sudanese — the three public corpora
 plus the personal chat export — is **11.1M tokens**, or 0.03% of the total.
 
+### Data expansion v2 (plan.md Part IV, acquired 2026-08-22)
+
+| Dataset | Role | Local path | Tokens | License |
+|---|---|---|---|---|
+| [Tarab — Sudanese slice](https://huggingface.co/datasets/drelhaj/Tarab) | **Stage C v2**, capped ~2% of mixture | `data/raw/tarab/` | **428.8K** (post-dedup) | CC-BY-4.0 |
+| [Lisan-Sudanese](https://huggingface.co/datasets/AymanMansour/Lisan-Sudanese-TTS-Dataset) (via TTS mirrors) | **Stage C v2** + **Lisan holdout eval** (15% held out) | `data/raw/lisan/` | **47.0K** | CC-BY-4.0 |
+| [Organic Sudanese sample](https://huggingface.co/datasets/ebubekr53/organic-sudanese-arabic-dialect-dataset) | **Stage C v2** (via `sudani.py`) | `data/raw/organic_sudanese/` | **3.6K** | CC-BY-4.0 |
+| [Alexandria — SD subset](https://huggingface.co/datasets/UBC-NLP/alexandria) | ⚠️ **reserved** — eval/seed material only, not training | `data/raw/alexandria_sd/` | 345 conversations | CC-BY-NC-4.0 |
+| oddadmix Sudanese transcripts ([podcast](https://huggingface.co/datasets/oddadmix/arabic-audio-collection-sudanese-sudan-podcast), nuuar, gobara) | **Stage C v2** | `data/raw/oddadmix/` | **2.49M** (255 episodes, 6,545 docs) | unstated (scraped YouTube) — private use only |
+| [sudaneseonline.com forum crawl](https://sudaneseonline.com/board/index.htm) | **Stage C v2** (once dialect audit passes) | `data/raw/sudaneseonline/` | *crawl in progress, 110,410 thread URLs* | site content, authors' copyright — private use only |
+
+The v2 rule of thumb: every source lands in `data/raw/<name>/`, gets a preprocessing module
+producing `data/interim/<name>/{train,val}.jsonl` split by container (episode / thread / song —
+never by post), and enters training only through a mixture manifest (`configs/mixtures/*.yaml`)
+that records per-source token counts in the pack's `meta.json`.
+
 ---
 
 ## ArabicWeb24
@@ -308,3 +324,85 @@ upsampled material when training the 32k tokenizer, where dialect merges matter 
 2. `وامدرمان طيب` *(Mode=1)*
 3. `ترحال اسعارهم غالية و ما بقبلو كل المشاوير و ماف عربات باقي التطبيقات دايما ما عندهم عربات كفاية` *(Mode=0)*
 4. `مقاطعة ترحال ادونا شروط التسجيل عندكم` *(Mode=0)*
+
+---
+
+## Tarab — Sudanese lyric slice (v2)
+
+- **Role:** **Stage C v2**, capped ~2% of the mixture, `repeat: 1` · **Path:** `data/raw/tarab/tarab_Sudanese.csv` · **Tokens:** 428.8K post-dedup · **Size:** 16 MB raw
+- **License:** CC-BY-4.0 · **Source:** https://huggingface.co/datasets/drelhaj/Tarab (ABJAD-NLP 2026; includes the older Habibi lyric corpus — `corpus_version` column)
+
+89,226 verses across 2,663 songs; `src/preprocessing/lyrics.py` reassembles songs from
+`art_id`/`verse_order`, and because repeated choruses ship as duplicate rows with the same
+`verse_order`, sorting makes them adjacent and the consecutive-duplicate collapse reduces the
+slice to near unique-verses-per-song (2.59M → 1.28M chars). That is intentional: sung repetition
+is a training hazard for a model with a repetition failure mode. Split by song, 2% val.
+
+**Example** (Haqiba-register):
+`انت ما قتلى لي... كلمتنى عيونى / عن مشاعر صادقة حية ... نابعة من اعماق شجونك`
+
+## Lisan-Sudanese (v2)
+
+- **Role:** **Stage C v2** via `sudani.py`; **15% (281 sentences) held out** as `data/interim/sudani/lisan_holdout.jsonl`, the `lisan_holdout` eval · **Path:** `data/raw/lisan/` · **Tokens:** 47.0K (1,878 unique sentences)
+- **License:** CC-BY-4.0 · **Source:** mirrored inside https://huggingface.co/datasets/AymanMansour/Lisan-Sudanese-TTS-Dataset (+ `New-...` twin, identical text) — the full Lisan corpus is at sina.birzeit.edu/currasat behind a request form
+
+The cleanest verified-dialect Sudanese that publicly exists: Facebook/YouTube comments,
+native-speaker verified, morphologically annotated upstream. The holdout matters more than the
+training tokens: it shares no people with the WhatsApp data and is native dialect rather than
+Flores translationese, so it is the one metric that catches contact-memorisation and
+translator-Sudanese at the same time.
+
+**Example:** `مشيت لقيت المظاهرات في نص الحلة خشيت أكورك مع الناس و هم يجدعوا في البمبان`
+
+## Organic Sudanese sample (v2)
+
+- **Role:** **Stage C v2** via `sudani.py` (154 of 300 rows survive cleaning) · **Path:** `data/raw/organic_sudanese/` · **Tokens:** 3.6K
+- **License:** CC-BY-4.0 · **Source:** https://huggingface.co/datasets/ebubekr53/organic-sudanese-arabic-dialect-dataset
+
+Spontaneous messages from a live dialect-translation app. Genuinely conversational
+(`متين انا وانت نخرج مع بعضنا`, `اها قلت شنو`) but with foreign probe rows ("paard") and some
+non-Sudanese dialect mixed in; majority-Arabic + length filters apply. Tiny; kept for register.
+
+## Alexandria — SD subset (v2)
+
+- **Role:** ⚠️ **reserved: eval/seed material only, never training** · **Path:** `data/raw/alexandria_sd/` · **Size:** 345 conversations (test split only — SD ships no train/dev)
+- **License:** CC-BY-NC-4.0 · **Source:** https://huggingface.co/datasets/UBC-NLP/alexandria
+
+English↔Sudanese parallel *conversations* — the only multi-turn parallel Sudanese resource
+anywhere. Too small to train on and too valuable as an independent check on synthetic chat
+quality; reserved accordingly.
+
+## oddadmix Sudanese transcripts (v2)
+
+- **Role:** **Stage C v2**, `repeat: 2` · **Path:** `data/raw/oddadmix/{sudan_podcast,nuuar,ahmed_gobara}.jsonl` · **Tokens:** **2.49M** (255 episodes → 6,545 docs of ~1.5K chars)
+- **License:** unstated; audio scraped from YouTube, transcripts AI-generated + QC'd — **private use only, never redistributed** · **Source:** https://huggingface.co/datasets/oddadmix/arabic-audio-collection-sudanese-sudan-podcast (+ `-nuuar`, `-ahmed-gobara`)
+
+~200 hours of transcribed spoken Sudanese — the closest public register to WhatsApp chat and
+~10× all other public Sudanese text combined. Fetched via column projection over `hf://` so the
+~14 GB of audio never touched disk. `src/preprocessing/oddadmix.py` strips the transcriber's
+full diacritization (nothing in the target distribution is vowelled), production tags, and
+ASR stutter runs; splits by episode. **Audit (2026-08-22): 25/30 random docs clearly Sudanese
+conversational** — the remainder is formal-MSA guest speech and one Gulf-dialect interviewee;
+gate (≥80%) passed.
+
+**Example:** `طبعا نحن متين شعرنا بالكلام ده؟ لمن طلعنا من السودان. شوفنا المعاملة كيف.`
+
+## sudaneseonline.com forum crawl (v2)
+
+- **Role:** **Stage C v2** once the ≥10M-token/dialect-audit gate passes · **Path:** `data/raw/sudaneseonline/` (`thread_urls.txt` 110,410 URLs from the site's own sitemaps; `html/` one gzipped page per thread) · **Status:** crawl in progress (started 2026-08-22, ~0.5s/request single-threaded, ~17h)
+- **License:** forum posts, authors' copyright — **private use only, never redistributed**. robots.txt disallows only `/admin/`; crawler is single-threaded, rate-limited, identifies itself, backs off on errors.
+
+25+ years of Sudanese forum discussion — the largest native-Sudanese text reservoir on the open
+web and the only real source that can rival synthesis in volume. Pages are mixed-encoding
+(UTF-8 with legacy cp1256 fragments); the preprocessing module handles decoding, post
+extraction, quote-pyramid dedup, and MSA news-paste filtering, splitting by thread.
+
+## Synthesis pipeline artifacts (v2)
+
+- **Path:** `data/interim/synthetic/` — `blocklist.json` (the DECISIONS.md off-record rule,
+  enforced by `src/synthesis/blocklist.py` asserts), `pseudonym_map.json` (53 identities, 189
+  name variants → stable fake Sudanese names; **local only, never uploaded**),
+  `card_inputs/` (42 persona-card distillation prompts + owner card, pseudonymized — these
+  files are exactly what leaves the machine during card compilation).
+- **Rule:** synthetic training data inherits pseudonyms only; `qc.py` scans every synthetic
+  document for every real name variant before admission.

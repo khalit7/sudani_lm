@@ -326,11 +326,18 @@ def pack_mixture(stage, primary_texts, replay_fraction, replay_texts=None,
 
 
 
-# Chats whose owner-token share falls below this go to Stage C (dialect exposure); the rest go
-# to Stage D (style). Measured on the corpus the two pools are near-disjoint in character: the
-# low-share side is dominated by group chats at ~11% owner tokens, the high side by 1:1 threads
-# at ~44%.
+# Chats whose owner-token share falls below this go to Stage D's complement split. Measured on
+# the corpus the two pools are near-disjoint in character: the low-share side is dominated by
+# group chats at ~11% owner tokens, the high side by 1:1 threads at ~44%.
 ME_SHARE_THRESHOLD = 0.20
+
+# Stage C's own default. The nine-model ablation (plan.md, "how should C and D divide the chat
+# corpus?") settled that Stage C must see the *whole* chat corpus — masking, not data splitting,
+# is what justifies Stage D. 1.01 puts every chat below the threshold. Stage D keeps 0.20.
+# This constant exists because the shipped stage_c pack was built with an ad-hoc
+# `--me-threshold 1.01` override, and a rebuild without it silently reverted to the mixture the
+# ablation rejected.
+STAGE_C_ME_THRESHOLD = 1.01
 
 ME_TURN_RE = re.compile(r"<\|turn\|>ME:(.*?)(<\|end\|>)", re.S)
 
@@ -390,14 +397,33 @@ def split_chat(texts, fraction, seed=SEED):
     return first, second
 
 
+def _warn_if_threshold_changed(stage, threshold) -> None:
+    """Refuse to let a repack silently change the C/D chat split.
+
+    The mixture a stage trains on is part of the experiment; meta.json records it. A different
+    threshold on a rebuild is occasionally intentional (an ablation arm) and often a forgotten
+    flag, so it is a loud warning rather than an error.
+    """
+    meta_path = DATA_PACKED / stage / "meta.json"
+    if not meta_path.exists():
+        return
+    previous = json.loads(meta_path.read_text()).get("me_share_threshold")
+    if previous is not None and abs(previous - threshold) > 1e-9:
+        print(f"  WARNING: repacking {stage} with me_share_threshold={threshold} but the "
+              f"existing pack was built with {previous} — the chat mixture will change",
+              flush=True)
+
+
 def pack_stage_c(stage="stage_c", arabic_replay=CPT_ARABIC_REPLAY, sudani_upsample=3,
-                 threshold=ME_SHARE_THRESHOLD) -> dict:
+                 threshold=STAGE_C_ME_THRESHOLD) -> dict:
     """Stage C — dialect exposure (continued pretraining, loss on every token).
 
-    Chat side is restricted to the chats where the owner barely speaks (owner-token share below
-    `threshold`, in practice mostly group threads). Those are the best dialect material: many
-    distinct speakers, and they spend none of the owner's own writing, which Stage D needs.
+    Sees the *whole* chat corpus by default (threshold 1.01 → every chat qualifies). The earlier
+    design restricted C to low-owner-share chats to save the owner's writing for Stage D, but the
+    ablation showed that starves C: masking in D, not data splitting, is what makes the stages
+    different. A lower threshold survives as an explicit override for ablation arms only.
     """
+    _warn_if_threshold_changed(stage, threshold)
     tokenizer = Tokenizer.from_file(str(TOKENIZER_PATH))
     rows = _read_jsonl_rows(DATA_INTERIM / "whatsapp" / "train.jsonl")
     low, high, shares = split_chats_by_me_share(tokenizer, rows, threshold)
@@ -423,6 +449,7 @@ def pack_stage_d(stage="stage_d", threshold=ME_SHARE_THRESHOLD) -> dict:
     token is still *read* as context; only the owner's replies are *scored*, which is what makes
     this a different gradient rather than more continued-pretraining epochs.
     """
+    _warn_if_threshold_changed(stage, threshold)
     tokenizer = Tokenizer.from_file(str(TOKENIZER_PATH))
     eos_id = tokenizer.token_to_id("</s>")
     rows = _read_jsonl_rows(DATA_INTERIM / "whatsapp" / "train.jsonl")
@@ -450,6 +477,110 @@ def pack_stage_d(stage="stage_d", threshold=ME_SHARE_THRESHOLD) -> dict:
         "scored_fraction": round(scored_train / max(train.total, 1), 4),
         "loss_on": "owner replies only",
         "me_share_threshold": threshold,
+        "dtype": np.dtype(DTYPE).name,
+        "vocab_size": tokenizer.get_vocab_size(),
+        "tokenizer_fingerprint": tokenizer_fingerprint(),
+        "eos_id": eos_id,
+        "seed": SEED,
+        "built_seconds": round(time.time() - start, 1),
+    }
+    (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    return meta
+
+
+def pack_manifest(manifest_path) -> dict:
+    """Pack a stage from a YAML mixture manifest (data expansion v2, plan.md Part IV).
+
+    `pack_stage_c` hardcodes exactly three ingredients; the v2 corpus has many sources with
+    per-source upsampling, and the ablation arms need to swap mixtures without touching code.
+    A manifest makes each mixture a diffable file:
+
+        stage: stage_c_v2
+        sources:                    # packed in order; the train loader shuffles blocks anyway
+          - {path: data/interim/whatsapp/train.jsonl, repeat: 2}
+          - {path: data/interim/sudani/all.jsonl,     repeat: 2, name: sudani}
+        arabic_replay: 0.25         # share of the final stream drawn from the pretrain pack
+        val_sources:                # concatenated into val.bin, boundaries recorded in meta
+          - {path: data/interim/whatsapp/val.jsonl, name: whatsapp}
+
+    `repeat` is plain repetition of the source's token stream — blocks are shuffled at train
+    time, so upsampling needs nothing cleverer. Per-source token counts and val boundaries land
+    in meta.json: the counts are the record of what the mixture actually was, and the boundaries
+    are what the per-source validation evaluator slices on.
+
+    Keep val_sources ordered with the primary corpus first: the trainer's in-loop val loss reads
+    only the first `val_max_batches` blocks, so the head of val.bin is what it measures.
+
+    Usage:  python -m src.preprocessing.pack manifest configs/mixtures/stage_c_v2.yaml
+    """
+    import yaml
+
+    manifest_path = Path(manifest_path)
+    manifest = yaml.safe_load(manifest_path.read_text())
+    stage = manifest["stage"]
+
+    tokenizer = Tokenizer.from_file(str(TOKENIZER_PATH))
+    eos_id = tokenizer.token_to_id("</s>")
+    out_dir = DATA_PACKED / stage
+    train = ShardWriter(out_dir / "train.bin")
+    start = time.time()
+
+    def _pack_source(writer, source) -> dict:
+        path = REPO_ROOT / source["path"]
+        texts = _read_jsonl(path, source.get("field", "text"))
+        repeat = int(source.get("repeat", 1))
+        before = writer.total
+        for _ in range(repeat):
+            for i in range(0, len(texts), ENCODE_BATCH):
+                batch = texts[i : i + ENCODE_BATCH]
+                _encode_into(tokenizer, eos_id, batch, [writer] * len(batch))
+        return {
+            "name": source.get("name") or path.parent.name,
+            "path": source["path"],
+            "documents": len(texts),
+            "repeat": repeat,
+            "tokens": writer.total - before,
+        }
+
+    sources_meta = []
+    for source in manifest["sources"]:
+        entry = _pack_source(train, source)
+        sources_meta.append(entry)
+        print(f"  {entry['name']:<20} {entry['documents']:>8,} docs x{entry['repeat']}"
+              f" -> {entry['tokens']/1e6:8.2f}M tokens", flush=True)
+
+    primary_tokens = train.total
+    replay_fraction = float(manifest.get("arabic_replay", 0.0))
+    if replay_fraction > 0:
+        replay_target = int(primary_tokens * replay_fraction / max(1 - replay_fraction, 1e-9))
+        train.add(_sample_arabic_tokens(replay_target))
+        print(f"  {'arabic_replay':<20} {'':>8} {'':>4} -> {replay_target/1e6:8.2f}M tokens",
+              flush=True)
+    replay_tokens = train.total - primary_tokens
+    train.close()
+
+    val_sources_meta = []
+    val_total = 0
+    if manifest.get("val_sources"):
+        val = ShardWriter(out_dir / "val.bin")
+        for source in manifest["val_sources"]:
+            offset = val.total
+            entry = _pack_source(val, source)
+            entry["start"] = offset            # token offset into val.bin, for per-source ppl
+            val_sources_meta.append(entry)
+        val_total = val.total
+        val.close()
+
+    meta = {
+        "stage": stage,
+        "manifest": str(manifest_path.relative_to(REPO_ROOT)
+                        if manifest_path.is_relative_to(REPO_ROOT) else manifest_path),
+        "splits": {"train": train.total, **({"val": val_total} if val_sources_meta else {})},
+        "primary_tokens": primary_tokens,
+        "replay_tokens": replay_tokens,
+        "replay_fraction_actual": round(replay_tokens / max(train.total, 1), 4),
+        "sources": sources_meta,
+        "val_sources": val_sources_meta,
         "dtype": np.dtype(DTYPE).name,
         "vocab_size": tokenizer.get_vocab_size(),
         "tokenizer_fingerprint": tokenizer_fingerprint(),
@@ -496,7 +627,9 @@ def _load_instruction_replay():
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["pretrain", "stage_c", "stage_d"])
+    parser.add_argument("stage", choices=["pretrain", "stage_c", "stage_d", "manifest"])
+    parser.add_argument("manifest_path", nargs="?", default=None,
+                        help="manifest only: path to a configs/mixtures/*.yaml mixture file")
     parser.add_argument(
         "--limit-shards", type=int, default=None,
         help="pretrain only: pack the first N shards (for a quick smoke run)",
@@ -507,8 +640,12 @@ def main() -> int:
                         help="cpt only: share of the stage's tokens drawn from the Arabic pack")
     parser.add_argument("--sudani-upsample", type=int, default=1,
                         help="cpt only: repeat the public Sudanese corpora N times")
-    parser.add_argument("--me-threshold", type=float, default=ME_SHARE_THRESHOLD,
-                        help="owner-token share below which a chat goes to Stage C")
+    # Default None so each stage resolves its own: stage_c sees all chats (1.01, the ablation
+    # winner), stage_d keeps the 0.20 split. Passing a value explicitly is for ablation arms.
+    parser.add_argument("--me-threshold", type=float, default=None,
+                        help="owner-token share cutoff for the chat split"
+                             f" (stage_c default {STAGE_C_ME_THRESHOLD},"
+                             f" stage_d default {ME_SHARE_THRESHOLD})")
     args = parser.parse_args()
 
     if not TOKENIZER_PATH.exists():
@@ -518,13 +655,21 @@ def main() -> int:
     print(f"packing stage={args.stage} with tokenizer {tokenizer_fingerprint()}")
     if args.stage == "pretrain":
         meta = pack_pretrain(limit_shards=args.limit_shards)
+    elif args.stage == "manifest":
+        if not args.manifest_path:
+            print("manifest stage needs a manifest path", file=sys.stderr)
+            return 1
+        meta = pack_manifest(args.manifest_path)
     elif args.stage == "stage_c":
         meta = pack_stage_c(stage=args.out_stage or "stage_c",
                             arabic_replay=args.arabic_replay,
                             sudani_upsample=args.sudani_upsample,
-                            threshold=args.me_threshold)
+                            threshold=args.me_threshold if args.me_threshold is not None
+                            else STAGE_C_ME_THRESHOLD)
     else:
-        meta = pack_stage_d(stage=args.out_stage or "stage_d", threshold=args.me_threshold)
+        meta = pack_stage_d(stage=args.out_stage or "stage_d",
+                            threshold=args.me_threshold if args.me_threshold is not None
+                            else ME_SHARE_THRESHOLD)
     print(json.dumps(meta, indent=2))
     return 0
 

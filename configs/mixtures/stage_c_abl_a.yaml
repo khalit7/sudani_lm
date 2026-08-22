@@ -1,0 +1,27 @@
+# Ablation A arm — v1 recipe + the acquisition track (plan.md Part IV, gate 4).
+#
+# Controlled delta on stage_c_v1: same chat corpus, same 40% replay, same ~3-epoch schedule;
+# the only change is the new real Sudanese sources. Gate: chat-holdout & Flores-Sud ppl not
+# worse than v1 (63.3 / 255.9), MMLU within 0.01 — proving acquisitions pay before any
+# synthesis time is spent.
+#
+#   python -m src.preprocessing.pack manifest configs/mixtures/stage_c_abl_a.yaml
+
+stage: stage_c_abl_a
+
+sources:
+  - {path: data/interim/whatsapp/train.jsonl, name: whatsapp, repeat: 1}
+  # sudani now carries Lisan + organic too (holdout already excluded upstream)
+  - {path: data/interim/sudani/all.jsonl, name: sudani, repeat: 3}
+  # spoken conversational register, the closest to chat — upsampled like other small real data
+  - {path: data/interim/oddadmix/train.jsonl, name: oddadmix, repeat: 2}
+  # lyric register: repetition hazard, never upsampled
+  - {path: data/interim/lyrics/train.jsonl, name: lyrics, repeat: 1}
+
+arabic_replay: 0.4
+
+val_sources:
+  # whatsapp first: the trainer's in-loop val loss reads only the head of val.bin
+  - {path: data/interim/whatsapp/val.jsonl, name: whatsapp}
+  - {path: data/interim/oddadmix/val.jsonl, name: oddadmix}
+  - {path: data/interim/lyrics/val.jsonl, name: lyrics}

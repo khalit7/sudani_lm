@@ -118,9 +118,11 @@ class Factory:
             ChatHoldoutEvaluator,
             FloresPerplexityEvaluator,
             GenerationEvaluator,
+            JsonlPerplexityEvaluator,
             MMLULetterEvaluator,
             MMLULoglikelihoodEvaluator,
             OwnerReplyEvaluator,
+            PerSourceValEvaluator,
         )
 
         evaluators = []
@@ -129,7 +131,12 @@ class Factory:
             frequency = cfg.pop("freq", 500)
             run_at_0 = cfg.pop("run_at_0", True)
 
-            if name == "mmlu_loglikelihood":
+            # generic evaluators declare a kind and take their metric name from the config key,
+            # so any number of them can coexist (lisan_holdout, forum_holdout, ...)
+            if cfg.pop("kind", None) == "jsonl_ppl":
+                evaluators.append(JsonlPerplexityEvaluator(
+                    name, frequency=frequency, run_at_0=run_at_0, **cfg))
+            elif name == "mmlu_loglikelihood":
                 module = ArabicMMLUDatasetModule()
                 evaluators.append(MMLULoglikelihoodEvaluator(
                     module.build_dataset(cfg.pop("split", "test")),
@@ -154,6 +161,15 @@ class Factory:
             elif name == "generation":
                 evaluators.append(GenerationEvaluator(
                     frequency=frequency, run_at_0=run_at_0, **cfg))
+            elif name == "per_source_val":
+                # defaults to the stage being trained on, which is the only case that makes
+                # sense — the boundaries live in that stage's meta.json
+                stage = cfg.pop("stage", None) or (
+                    self.config["train"].get("dataloader") or {}).get("stage")
+                if not stage:
+                    raise Exception("per_source_val needs a stage (config or train.dataloader)")
+                evaluators.append(PerSourceValEvaluator(
+                    stage, frequency=frequency, run_at_0=run_at_0, **cfg))
             else:
                 raise Exception(f"eval name not recognised: {name}")
         return evaluators

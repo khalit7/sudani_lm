@@ -170,6 +170,105 @@ def test_real_pack_has_document_separators():
     assert (sample == meta["eos_id"]).sum() > 100, "documents are not being separated by </s>"
 
 
+# --- mixture manifests (data expansion v2, plan.md Part IV) -----------------------------------
+
+import inspect
+
+from src.preprocessing.pack import (
+    ME_SHARE_THRESHOLD,
+    STAGE_C_ME_THRESHOLD,
+    _warn_if_threshold_changed,
+    pack_manifest,
+    pack_stage_c,
+    pack_stage_d,
+)
+
+
+def test_stage_defaults_encode_the_ablation_winner():
+    """The shipped stage_c pack came from an ad-hoc --me-threshold 1.01 override; the default
+    must now say the same thing, or a rebuild silently reverts to the rejected mixture."""
+    assert inspect.signature(pack_stage_c).parameters["threshold"].default == STAGE_C_ME_THRESHOLD
+    assert STAGE_C_ME_THRESHOLD > 1.0, "stage C must see every chat"
+    assert inspect.signature(pack_stage_d).parameters["threshold"].default == ME_SHARE_THRESHOLD
+
+
+def test_threshold_change_warns(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("src.preprocessing.pack.DATA_PACKED", tmp_path)
+    stage_dir = tmp_path / "stage_c"
+    stage_dir.mkdir()
+    (stage_dir / "meta.json").write_text(json.dumps({"me_share_threshold": 1.01}))
+
+    _warn_if_threshold_changed("stage_c", 0.20)
+    assert "WARNING" in capsys.readouterr().out
+
+    _warn_if_threshold_changed("stage_c", 1.01)
+    assert "WARNING" not in capsys.readouterr().out
+
+
+@pytest.fixture
+def manifest_env(tmp_path, monkeypatch):
+    """Two tiny jsonl sources, a fake pretrain pack for replay, and a manifest factory."""
+    monkeypatch.setattr("src.preprocessing.pack.DATA_PACKED", tmp_path / "packed")
+
+    pretrain_dir = tmp_path / "packed" / "pretrain"
+    pretrain_dir.mkdir(parents=True)
+    np.arange(50_000, dtype=DTYPE).tofile(pretrain_dir / "train.bin")
+
+    def write_jsonl(name, texts):
+        path = tmp_path / name
+        path.write_text("\n".join(json.dumps({"text": t}) for t in texts) + "\n")
+        return path
+
+    a = write_jsonl("a.jsonl", [f"وثيقة تجريبية رقم {i} عن السودان" for i in range(30)])
+    b = write_jsonl("b.jsonl", [f"مستند آخر {i} بنص مختلف تماما" for i in range(20)])
+
+    def make(stage, sources, arabic_replay=0.0, val_sources=()):
+        import yaml
+        path = tmp_path / f"{stage}.yaml"
+        path.write_text(yaml.safe_dump({
+            "stage": stage, "sources": sources, "arabic_replay": arabic_replay,
+            "val_sources": list(val_sources),
+        }))
+        return path
+
+    return tmp_path, a, b, make
+
+
+def test_manifest_repeat_multiplies_the_token_stream(manifest_env):
+    tmp_path, a, _, make = manifest_env
+    once = pack_manifest(make("m1", [{"path": str(a), "name": "a", "repeat": 1}]))
+    twice = pack_manifest(make("m2", [{"path": str(a), "name": "a", "repeat": 2}]))
+    assert twice["sources"][0]["tokens"] == 2 * once["sources"][0]["tokens"]
+    assert twice["splits"]["train"] == 2 * once["splits"]["train"]
+
+
+def test_manifest_replay_hits_the_requested_fraction(manifest_env):
+    tmp_path, a, b, make = manifest_env
+    meta = pack_manifest(make(
+        "m3",
+        [{"path": str(a), "name": "a"}, {"path": str(b), "name": "b", "repeat": 3}],
+        arabic_replay=0.4,
+    ))
+    assert meta["replay_fraction_actual"] == pytest.approx(0.4, abs=0.01)
+    assert meta["primary_tokens"] + meta["replay_tokens"] == meta["splits"]["train"]
+    # per-source counts are the record of what the mixture actually was
+    assert sum(s["tokens"] for s in meta["sources"]) == meta["primary_tokens"]
+    actual = np.memmap(tmp_path / "packed" / "m3" / "train.bin", dtype=DTYPE, mode="r")
+    assert len(actual) == meta["splits"]["train"]
+
+
+def test_manifest_val_boundaries_are_contiguous(manifest_env):
+    tmp_path, a, b, make = manifest_env
+    meta = pack_manifest(make(
+        "m4", [{"path": str(a), "name": "a"}],
+        val_sources=[{"path": str(a), "name": "a"}, {"path": str(b), "name": "b"}],
+    ))
+    val = meta["val_sources"]
+    assert val[0]["start"] == 0
+    assert val[1]["start"] == val[0]["tokens"], "boundaries must tile val.bin with no gaps"
+    assert val[0]["tokens"] + val[1]["tokens"] == meta["splits"]["val"]
+
+
 @real_pack
 def test_real_pack_decodes_to_readable_arabic():
     from transformers import AutoTokenizer

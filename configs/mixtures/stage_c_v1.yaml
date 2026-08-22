@@ -1,0 +1,21 @@
+# The shipped v1 stage_c mixture, re-expressed as a manifest.
+#
+# Exists as the equivalence check for the manifest packer (plan.md Part IV, gate 1): packed to a
+# scratch stage name, it must reproduce data/packed/stage_c/meta.json's token counts exactly
+# (train 14,522,358 / primary 8,713,415 / replay 5,808,943 / val 404,625). It also documents
+# what v1 actually trained on, which the old CLI-flag route never wrote down in one place.
+#
+#   python -m src.preprocessing.pack manifest configs/mixtures/stage_c_v1.yaml
+
+stage: stage_c_v1_check
+
+sources:
+  # All 498 chats — the shipped pack used --me-threshold 1.01 (every chat qualifies), so the
+  # interim file needs no owner-share filtering here.
+  - {path: data/interim/whatsapp/train.jsonl, name: whatsapp, repeat: 1}
+  - {path: data/interim/sudani/all.jsonl, name: sudani, repeat: 3}
+
+arabic_replay: 0.4
+
+val_sources:
+  - {path: data/interim/whatsapp/val.jsonl, name: whatsapp}
