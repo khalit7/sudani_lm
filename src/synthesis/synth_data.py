@@ -309,8 +309,6 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("spec", nargs="+",
                         help="pairs: MODEL N [MODEL N ...], e.g. gemma3 1000 sonnet 1000")
-    parser.add_argument("--skip-qc", action="store_true",
-                        help="generate only; skip the filter/judge/render/diversity chain")
     args = parser.parse_args()
 
     if len(args.spec) % 2 != 0:
@@ -331,16 +329,11 @@ def main() -> int:
         for future in as_completed(futures):
             future.result()
 
-    if args.skip_qc:
-        return 0
-    print("\n=== QC chain: filter → judge → render ===", flush=True)
-    from src.synthesis import qc
-    qc.filter_cmd()
-    qc.judge_cmd(model="haiku")
-    qc.render_cmd(min_score=4)
-    print("\n=== diversity report ===", flush=True)
-    from src.synthesis import diversity
-    diversity.report()
+    # QC runs on demand, not automatically (owner decision 2026-08-27); everything it needs
+    # is cached incrementally, so it only ever pays for new documents.
+    print("\ngeneration done. Run the judge suite when ready:\n"
+          "  uv run python -m src.synthesis.qc all\n"
+          "  uv run python -m src.synthesis.diversity report", flush=True)
     return 0
 
 

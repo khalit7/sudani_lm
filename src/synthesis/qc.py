@@ -124,63 +124,82 @@ def degenerate(text):
     return None
 
 
+KILLS_PATH = SYN_DIR / "kills.jsonl"
+
+
 def filter_cmd() -> int:
+    """Incremental: documents already filtered (kept or killed) are never re-processed.
+
+    filtered.jsonl holds the kept payloads, kills.jsonl the rejected ids with reasons —
+    together they are the seen-set, so the on-demand QC suite only pays for new raw outputs.
+    """
     pseudo = get_pseudonymizer()
     leak_grams = _load_leakage_ngrams()
     kills = Counter()
-    kept = []
-    kept_shingles = []
 
+    kept = []
+    if FILTERED_PATH.exists():
+        kept = [json.loads(l) for l in FILTERED_PATH.read_text().splitlines() if l.strip()]
+    seen = {p["id"] for p in kept}
+    if KILLS_PATH.exists():
+        seen |= {json.loads(l)["id"] for l in KILLS_PATH.read_text().splitlines()
+                 if l.strip()}
+    # the near-duplicate screen compares new docs against the whole kept pool
+    kept_shingles = [_ngrams(p["qc_text"], n=4) for p in kept]
+    n_before = len(kept)
+
+    new_kills = []
     for path in sorted(RAW_DIR.glob("*.json")):
         payload = json.loads(path.read_text())
-        if payload["kind"] == "card":
+        if payload["kind"] == "card" or payload["id"] in seen:
             continue
+        reason = None
+        shingles = None
+        text = payload["text"].strip()
         if payload["kind"] == "chat":
             turns = parse_chat(payload)
             if turns is None:
-                kills["format"] += 1
-                continue
-            text = "\n".join(f"{speaker}: {t}" for speaker, t in turns)
-            payload["turns"] = turns
-        else:
-            text = payload["text"].strip()
-
-        reason = degenerate(text)
-        if reason:
+                reason = "format"
+            else:
+                text = "\n".join(f"{speaker}: {t}" for speaker, t in turns)
+                payload["turns"] = turns
+        if reason is None:
+            reason = degenerate(text)
+        if reason is None and pseudo.scan(text):
+            reason = "real_name"
+        if reason is None:
+            grams = _ngrams(text)
+            if grams & leak_grams:
+                reason = "leakage"
+            else:
+                seed_path = SYN_DIR / "requests" / f"{payload['id']}.md"
+                if seed_path.exists() and grams & _ngrams(seed_path.read_text()):
+                    reason = "seed_regurgitation"
+        if reason is None:
+            shingles = _ngrams(text, n=4)
+            for other in kept_shingles:
+                union = len(shingles | other)
+                if union and len(shingles & other) / union > 0.6:
+                    reason = "near_duplicate"
+                    break
+        if reason is not None:
             kills[reason] += 1
-            continue
-        if pseudo.scan(text):
-            kills["real_name"] += 1
-            continue
-
-        grams = _ngrams(text)
-        if grams & leak_grams:
-            kills["leakage"] += 1
-            continue
-        seed_path = SYN_DIR / "requests" / f"{payload['id']}.md"
-        if seed_path.exists() and grams & _ngrams(seed_path.read_text()):
-            kills["seed_regurgitation"] += 1
-            continue
-
-        shingles = _ngrams(text, n=4)
-        duplicate = False
-        for other in kept_shingles:
-            union = len(shingles | other)
-            if union and len(shingles & other) / union > 0.6:
-                duplicate = True
-                break
-        if duplicate:
-            kills["near_duplicate"] += 1
+            new_kills.append({"id": payload["id"], "kill": reason})
             continue
         kept_shingles.append(shingles)
         payload["qc_text"] = text
         kept.append(payload)
 
-    with open(FILTERED_PATH, "w", encoding="utf-8") as fh:
-        for payload in kept:
+    # append-only persistence: this is the seen-set for future incremental runs
+    with open(FILTERED_PATH, "a", encoding="utf-8") as fh:
+        for payload in kept[n_before:]:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    total = len(kept) + sum(kills.values())
-    print(f"kept {len(kept)}/{total} ({len(kept)/max(total,1):.0%})")
+    with open(KILLS_PATH, "a", encoding="utf-8") as fh:
+        for row in new_kills:
+            fh.write(json.dumps(row) + "\n")
+    new_total = (len(kept) - n_before) + len(new_kills)
+    print(f"new this run: kept {len(kept)-n_before}/{new_total}"
+          f" ({(len(kept)-n_before)/max(new_total,1):.0%}); pool total {len(kept)} kept")
     for reason, count in kills.most_common():
         print(f"  killed {count:>5}  {reason}")
     return 0
@@ -285,9 +304,18 @@ def render_cmd(min_score=4) -> int:
     return 0
 
 
+def suite(model="haiku", min_score=4) -> int:
+    """The on-demand judge suite: incremental filter → judge (cached by id) → full render."""
+    filter_cmd()
+    judge_cmd(model=model)
+    render_cmd(min_score=min_score)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("all", help="filter -> judge -> render, incrementally (the judge suite)")
     sub.add_parser("filter")
     judge = sub.add_parser("judge")
     judge.add_argument("--model", default="haiku")
@@ -296,6 +324,8 @@ def main() -> int:
     render.add_argument("--min-score", type=int, default=4)
     args = parser.parse_args()
 
+    if args.cmd == "all":
+        return suite()
     if args.cmd == "filter":
         return filter_cmd()
     if args.cmd == "judge":
