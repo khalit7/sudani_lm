@@ -20,8 +20,16 @@ The model→task mapping lives in `MODEL_REGISTRY` (`synth_data.py`):
 
 Adding a model = one registry entry (task, backend, tag, concurrency).
 
-When generation finishes, the QC chain runs automatically (filter → Haiku judge → render)
-plus the per-generator diversity report. `--skip-qc` generates only.
+Generation only generates. The judge suite runs **on demand**:
+
+```bash
+uv run python -m src.synthesis.qc all          # filter → Haiku judge → render
+uv run python -m src.synthesis.diversity report
+```
+
+It is fully incremental — kept documents live in `filtered.jsonl`, rejects in `kills.jsonl`,
+judge scores in `judged.jsonl`, all keyed by id — so every invocation pays only for documents
+it has never seen. Safe to run mid-generation.
 
 **Outputs**
 - `data/interim/synthetic/raw/sd_<runstamp>_<model>_<i>.json` — one per generation, with
@@ -42,12 +50,12 @@ plus the per-generator diversity report. `--skip-qc` generates only.
 
 | module | what it does |
 |---|---|
-| `synth_data.py` | the CLI: registry, seed samplers, backends, auto-QC |
+| `synth_data.py` | the CLI: registry, seed samplers, backends |
 | `situations.py` | builds the situation bank (2,005 two-sentence situations, offline, Verbalized Sampling) — rebuild with `... situations build` |
 | `prompts.py` | all prompt templates, versioned (`PROMPT_VERSION`) |
 | `seed_sampler.py` | real-corpus access: excerpts, mention-graph pairs, group rosters, measured topics; enforces val-chat + blocklist exclusions |
 | `persona_cards.py` | compiles the 42+1 persona cards from the PKB (one-time; cards live in `data/interim/synthetic/cards/`) |
-| `qc.py` | filter → judge → render chain (subcommands `filter` / `judge` / `render`) |
+| `qc.py` | the judge suite (`all` = incremental filter → judge → render; also runnable stepwise) |
 | `diversity.py` | per-generator diversity metrics (`... diversity report`) |
 | `bakeoff.py` | the local-model evaluation harness (kept for future model auditions) |
 | `blocklist.py` / `pseudonyms.py` | the off-record exclusion (always on) and the retired pseudonymization layer (off; `POLICY` flag) |
