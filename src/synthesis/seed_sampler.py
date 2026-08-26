@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 
 from src.synthesis import blocklist
-from src.synthesis.pseudonyms import Pseudonymizer
+from src.synthesis.pseudonyms import get_pseudonymizer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PKB = Path.home() / "personal_knowledge_base"
@@ -83,14 +83,14 @@ def _person_index():
             continue
         if any(chat in val_chats for chat in info.get("chats", [])):
             continue        # this person's 1:1 thread is (partly) the eval holdout
-        people[slug] = info
+        people[slug] = dict(info, person=person)
     return people
 
 
 class SeedSampler:
     def __init__(self, seed: int = SEED):
         self.people = _person_index()
-        self.pseudo = Pseudonymizer()
+        self.pseudo = get_pseudonymizer()
         self.evidence = json.loads((PKB / "evidence.json").read_text())
         self.rng = random.Random(seed)
         self._segments = {}
@@ -118,7 +118,7 @@ class SeedSampler:
         return [t for t, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:n]]
 
     def sample(self, slug):
-        """One pseudonymized seed: {date, turns: [(speaker, text)], topic} or None."""
+        """One seed: {date, turns: [(speaker, text)], topic} or None."""
         segments = self._load(slug)
         if not segments:
             return None
@@ -134,6 +134,112 @@ class SeedSampler:
             "date": segment["date"],
             "topic": self.rng.choice(topics) if topics else None,
             "turns": [(speaker, self.pseudo.apply(text)) for speaker, text in window],
+        }
+
+    def display_name(self, slug):
+        """The person's curated name from corpus_index — chat titles can be junk
+        ("Ammmmmaaaaaar", a shared couple chat's title), person keys are clean."""
+        return self.people[slug].get("person") or slug
+
+    # ---- non-K chats: mention-graph pairs and real group segments -------------------------
+
+    def pair_candidates(self):
+        """[(slug_a, slug_b, weight)]: pairs weighted by how often A's chat mentions B.
+
+        evidence.json's mention keys are short display names; they are matched to people by
+        first-token overlap with the person key or chat titles. Fuzzy, but a wrong pairing is
+        harmless — worst case two acquaintances get a synthetic conversation.
+        """
+        by_token = {}
+        for slug, info in self.people.items():
+            for name in [Path(info["file"]).stem, *info.get("chats", [])]:
+                token = name.split()[0].lower().split("-")[0]
+                if len(token) >= 3:
+                    by_token.setdefault(token, slug)
+        weights = {}
+        for slug, info in self.people.items():
+            for chat in info.get("chats", []):
+                for mention, count in self.evidence.get(chat, {}).get("mentions", {}).items():
+                    other = by_token.get(mention.split()[0].lower())
+                    if other and other != slug:
+                        pair = tuple(sorted((slug, other)))
+                        weights[pair] = weights.get(pair, 0) + count
+        return [(a, b, w) for (a, b), w in sorted(weights.items(), key=lambda kv: -kv[1])]
+
+    def sample_pair_excerpts(self, slug_a, slug_b):
+        """Style anchors for a non-K pair: each person's own real excerpt, plus merged topics.
+
+        No real A↔B transcript exists (the corpora only hold K's chats), so each side anchors
+        on their own authentic voice and the generator supplies the interaction.
+        """
+        excerpts = {}
+        for slug in (slug_a, slug_b):
+            seed = self.sample(slug)
+            if seed is None:
+                return None
+            name = self.display_name(slug)
+            excerpts[slug] = "\n".join(
+                f"{'K' if sp == 'K' else name}: {text}" for sp, text in seed["turns"])
+        topics = list(dict.fromkeys(self.topics(slug_a) + self.topics(slug_b)))
+        return {
+            "excerpt_a": excerpts[slug_a],
+            "excerpt_b": excerpts[slug_b],
+            "topic": self.rng.choice(topics) if topics else None,
+        }
+
+    def _load_group_segments(self):
+        """Real group-chat segments with ≥3 speakers, ≥2 of whom have persona cards."""
+        if hasattr(self, "_groups"):
+            return self._groups
+        display_to_slug = {self.display_name(s): s for s in self.people}
+        display_to_slug.update({Path(info["file"]).stem: slug
+                                for slug, info in self.people.items()})
+        groups = []
+        for slug, info in self.people.items():
+            host_name = self.display_name(slug)
+            for segment in parse_corpus(PKB / "corpora" / info["file"]):
+                if segment["group"] is None or len(segment["turns"]) < MIN_TURNS:
+                    continue
+                # in group segments the corpus writes the host person as literal 'X' —
+                # restore their name or the generator learns a speaker called "X"
+                segment["turns"] = [(host_name if sp == "X" else sp, text)
+                                    for sp, text in segment["turns"]]
+                speakers = {sp for sp, _ in segment["turns"]}
+                carded = {("K" if sp == "K" else sp) for sp in speakers
+                          if sp == "K" or sp in display_to_slug}
+                if len(speakers) >= 3 and len(carded - {"K"}) >= 2:
+                    groups.append({"host": slug, "segment": segment,
+                                   "carded": sorted(carded),
+                                   "slugs": sorted({display_to_slug[sp]
+                                                    for sp in carded if sp != "K"})})
+        # a group thread appears once per member corpus; dedup by group name + date
+        seen, unique = set(), []
+        for group in groups:
+            key = (group["segment"]["group"], group["segment"]["date"],
+                   len(group["segment"]["turns"]))
+            if key not in seen:
+                seen.add(key)
+                unique.append(group)
+        self._groups = unique
+        return unique
+
+    def sample_group(self):
+        """One real group excerpt: {group, date, turns, speakers, slugs} or None."""
+        groups = self._load_group_segments()
+        if not groups:
+            return None
+        group = self.rng.choice(groups)
+        turns = group["segment"]["turns"]
+        length = self.rng.randint(MIN_TURNS, min(MAX_TURNS + 4, len(turns)))
+        start = self.rng.randint(0, len(turns) - length)
+        blocklist.assert_clean(group["slugs"], "group seed sampling")
+        return {
+            "group": group["segment"]["group"],
+            "date": group["segment"]["date"],
+            "speakers": group["carded"],
+            "slugs": group["slugs"],
+            "turns": [(sp, self.pseudo.apply(text))
+                      for sp, text in turns[start : start + length]],
         }
 
 

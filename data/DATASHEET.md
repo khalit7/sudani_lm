@@ -73,7 +73,7 @@ plus the personal chat export — is **11.1M tokens**, or 0.03% of the total.
 | [Organic Sudanese sample](https://huggingface.co/datasets/ebubekr53/organic-sudanese-arabic-dialect-dataset) | **Stage C v2** (via `sudani.py`) | `data/raw/organic_sudanese/` | **3.6K** | CC-BY-4.0 |
 | [Alexandria — SD subset](https://huggingface.co/datasets/UBC-NLP/alexandria) | ⚠️ **reserved** — eval/seed material only, not training | `data/raw/alexandria_sd/` | 345 conversations | CC-BY-NC-4.0 |
 | oddadmix Sudanese transcripts ([podcast](https://huggingface.co/datasets/oddadmix/arabic-audio-collection-sudanese-sudan-podcast), nuuar, gobara) | **Stage C v2** | `data/raw/oddadmix/` | **2.49M** (255 episodes, 6,545 docs) | unstated (scraped YouTube) — private use only |
-| [sudaneseonline.com forum crawl](https://sudaneseonline.com/board/index.htm) | **Stage C v2** (once dialect audit passes) | `data/raw/sudaneseonline/` | *crawl in progress, 110,410 thread URLs* | site content, authors' copyright — private use only |
+| [sudaneseonline.com forum crawl](https://sudaneseonline.com/board/index.htm) | **Stage C v2**: dialect-scored, mixture takes score ≥0.5 ≈ **19.6M tokens** | `data/raw/sudaneseonline/` | **~243M** total (69,633 threads; 99.4% of unique threads) | site content, authors' copyright — private use only |
 
 The v2 rule of thumb: every source lands in `data/raw/<name>/`, gets a preprocessing module
 producing `data/interim/<name>/{train,val}.jsonl` split by container (episode / thread / song —
@@ -389,20 +389,36 @@ gate (≥80%) passed.
 
 ## sudaneseonline.com forum crawl (v2)
 
-- **Role:** **Stage C v2** once the ≥10M-token/dialect-audit gate passes · **Path:** `data/raw/sudaneseonline/` (`thread_urls.txt` 110,410 URLs from the site's own sitemaps; `html/` one gzipped page per thread) · **Status:** crawl in progress (started 2026-08-22, ~0.5s/request single-threaded, ~17h)
-- **License:** forum posts, authors' copyright — **private use only, never redistributed**. robots.txt disallows only `/admin/`; crawler is single-threaded, rate-limited, identifies itself, backs off on errors.
+- **Role:** **Stage C v2**, dialect-ranked: the mixture takes threads with dialect score ≥0.5 ≈ **19.6M tokens** (~5.8M at ≥0.8) of the **~243M** extracted · **Path:** `data/raw/sudaneseonline/` (`html/` 72,761 gzipped thread pages = 99.4% of the ~73,180 unique threads in the site's sitemaps; the 110,410 sitemap URLs list most threads twice) · **Interim:** `data/interim/sudaneseonline/{train,val}.jsonl`, 69,633 threads, each row carrying a `dialect` probability
+- **License:** forum posts, authors' copyright — **private use only, never redistributed**. robots.txt disallows only `/admin/`; the crawl was single-threaded, rate-limited, self-identifying, with error backoff (finished 2026-08-23, 2 hard failures).
 
 25+ years of Sudanese forum discussion — the largest native-Sudanese text reservoir on the open
-web and the only real source that can rival synthesis in volume. Pages are mixed-encoding
-(UTF-8 with legacy cp1256 fragments); the preprocessing module handles decoding, post
-extraction, quote-pyramid dedup, and MSA news-paste filtering, splitting by thread.
+web. Site quirks handled by `src/preprocessing/sudaneseonline.py`: per-line repair of the
+2015-era UTF-8-as-cp1256 double-encoding (irreparable lines dropped), site-boilerplate line
+stripping, quote-pyramid/signature dedup by seen-line, split by thread. Register runs from MSA
+news pastes to pure dialect storytelling, so every thread is scored by
+`src/preprocessing/dialect_score.py` (char 2–5-gram logistic head, Sudanese-vs-MSA, 98.1%
+holdout accuracy; trained on the project's own trusted corpora). Band audit 2026-08-23: ≥0.8 is
+genuine dialect discourse (ونسة, banter, colloquial poetry) with zero mojibake; 0.5–0.8 is
+dialect-seasoned opinion; <0.3 is MSA news.
+
+**Example (score 0.92):**
+`جيت جاري جري علي البيت.. قلت متين اصل.. والعنقريب جاك زول.. فتران فتر شديد وتعبان تعب شديد ..و....نعسااااان`
 
 ## Synthesis pipeline artifacts (v2)
 
 - **Path:** `data/interim/synthetic/` — `blocklist.json` (the DECISIONS.md off-record rule,
-  enforced by `src/synthesis/blocklist.py` asserts), `pseudonym_map.json` (53 identities, 189
-  name variants → stable fake Sudanese names; **local only, never uploaded**),
-  `card_inputs/` (42 persona-card distillation prompts + owner card, pseudonymized — these
-  files are exactly what leaves the machine during card compilation).
-- **Rule:** synthetic training data inherits pseudonyms only; `qc.py` scans every synthetic
-  document for every real name variant before admission.
+  enforced by `src/synthesis/blocklist.py` asserts), `card_inputs/` (42 persona-card
+  distillation prompts + owner card — these files are exactly what leaves the machine during
+  card compilation), `pseudonym_map.json` (retained but inactive, see below).
+- **Naming policy (owner decision 2026-08-23):** cards, seeds and synthetic data carry **real
+  names**, including real WhatsApp sender names as speaker labels, so synthetic chats align
+  with the real corpus. The earlier pseudonymization layer is kept behind
+  `POLICY = "pseudonyms"` in `src/synthesis/pseudonyms.py` but is off. Phones, emails and
+  handles are still masked in anything sent to Claude. `elaf-osman` stays excluded everywhere
+  regardless of policy.
+
+## Situation bank (v2 synthesis seed artifact)
+
+- **Path:** `data/interim/synthetic/situations.jsonl` (~2,000 entries) · **Built:** 2026-08-27, offline, via Verbalized Sampling (Claude Sonnet, k=8 candidates with probabilities per call)
+- **Role:** the only topic source the generators ever see — two-sentence Sudanese situations with a causal hook, rooted in the personas' measured topic distributions × an attribute grid (time-of-day / emotional valence / arc / media). Replaces flat topic nouns; the generator never free-chooses a topic (mode-collapse guard). Regenerable with `python -m src.synthesis.situations build`.

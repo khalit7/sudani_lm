@@ -34,7 +34,9 @@ HTML_DIR = RAW_DIR / "html"
 
 BASE = "https://sudaneseonline.com/"
 USER_AGENT = "Mozilla/5.0 (compatible; sudani-lm-crawler; personal research use)"
-MSG_ID_RE = re.compile(r"-(\d+)\.html?$")
+# thread ids appear both as "...-<id>.html" (titled form) and "msg/<id>.html" (bare form);
+# the sitemaps list most threads in both forms, so the filename-by-id scheme dedups them
+MSG_ID_RE = re.compile(r"[-/](\d+)\.html?$")
 BOARD_RE = re.compile(r"^board/(\d+)/")
 
 MAX_CONSECUTIVE_FAILURES = 20

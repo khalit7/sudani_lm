@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.synthesis import blocklist, prompts
-from src.synthesis.pseudonyms import Pseudonymizer
+from src.synthesis.pseudonyms import get_pseudonymizer
 from src.synthesis.seed_sampler import SeedSampler
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,9 +46,13 @@ CARDS_DIR = SYN_DIR / "cards"
 CARD_INPUTS_DIR = SYN_DIR / "card_inputs"
 
 SEED = 67
-# pilot mix by request count: chats dominate because multi-turn dialogue is the register that
-# publicly does not exist; transforms are capped as the weakest register signal
-KIND_SHARES = {"chat": 0.7, "monologue": 0.2, "transform": 0.1}
+# owner-set mix (2026-08-24, for the full synth run): transforms dropped entirely — the pilot
+# killed 89/120 in structural QC (lazy MSA passthrough) and passed only 39% of survivors
+# through the dialect judge. Chats and monologues split evenly.
+KIND_SHARES = {"chat": 0.5, "monologue": 0.5}
+# within the chat share: half involve the owner; the rest exercise the mention graph — pairs
+# of his people talking to each other, and real group threads continued
+CHAT_MIX = ("k_chat", "k_chat", "pair_chat", "group_chat")
 CLAUDE_TIMEOUT = 600
 USAGE_LIMIT_SLEEP = 900          # 15 min: wait out a usage-limit window, don't hammer it
 
@@ -111,7 +115,7 @@ def _monologue_seed(rng):
     """A real discourse-register snippet: oddadmix transcript docs are the default pool."""
     path = REPO_ROOT / "data/interim/oddadmix/train.jsonl"
     lines = path.read_text().splitlines()
-    return json.loads(rng.choice(lines))["text"][:1200]
+    return json.loads(rng.choice(lines))["text"][:2000]
 
 
 def _msa_sources(rng, n):
@@ -123,7 +127,7 @@ def _msa_sources(rng, n):
     picked = []
     for i in rng.sample(range(len(ds)), min(4000, len(ds))):
         text, metadata = ds[i]["text"], ds[i]["metadata"]
-        if keep_document(text, metadata) and 60 <= len(text.split()) <= 160:
+        if keep_document(text, metadata) and 200 <= len(text.split()) <= 450:
             picked.append(text)
             if len(picked) >= n:
                 break
@@ -135,7 +139,6 @@ def plan_pilot(n_requests, models=("sonnet", "opus")) -> int:
     rng = random.Random(SEED)
     cards = _load_cards()
     sampler = SeedSampler()
-    pseudo = Pseudonymizer()
     existing = {entry["id"] for entry in _read_queue()}
 
     slugs = [s for s in sampler.slugs() if s in cards]
@@ -143,33 +146,82 @@ def plan_pilot(n_requests, models=("sonnet", "opus")) -> int:
     counts = {kind: int(n_requests * share) for kind, share in KIND_SHARES.items()}
     entries = []
 
-    msa_pool = _msa_sources(rng, counts["transform"] + 8)
-    fake_owner = pseudo.mapping["Khalid (owner)"]["fake_en"]
+    msa_pool = (_msa_sources(rng, counts["transform"] + 8)
+                if counts.get("transform") else [])
+    # real_names policy: the owner's non-ME speaker label is simply his name, and each partner
+    # is labelled with their actual WhatsApp sender name so synthetic chats line up with the
+    # real corpus's speaker labels
+    fake_owner = "Khalid"
+
+    pair_pool = [(a, b) for a, b, _ in sampler.pair_candidates()
+                 if a in cards and b in cards]
 
     for i in range(counts["chat"]):
-        slug = slugs[i % len(slugs)]
-        request_id = f"chat_{slug}_{i:05d}"
-        if request_id in existing:
-            continue
-        seed = sampler.sample(slug)
-        if seed is None:
-            continue
-        partner = pseudo.mapping.get(slug, {}).get("fake_en") or slug
-        seed_text = "\n".join(
-            f"{'K' if sp == 'K' else partner}: {text}" for sp, text in seed["turns"])
-        prompt = prompts.chat_prompt(
-            owner_card=cards["owner"], partner_name=partner, partner_card=cards[slug],
-            seed_text=seed_text, date=seed["date"], topic=seed["topic"],
-            n_turns=rng.randint(15, 25))
+        sub_kind = CHAT_MIX[i % len(CHAT_MIX)]
+        n_turns = rng.randint(30, 50)
+        version = prompts.PROMPT_VERSION
+
+        if sub_kind == "pair_chat" and pair_pool:
+            slug_a, slug_b = pair_pool[i % len(pair_pool)]
+            request_id = f"pair_{version}_{slug_a}--{slug_b}_{i:05d}"
+            if request_id in existing:
+                continue
+            pair = sampler.sample_pair_excerpts(slug_a, slug_b)
+            if pair is None:
+                continue
+            name_a, name_b = sampler.display_name(slug_a), sampler.display_name(slug_b)
+            prompt = prompts.pair_chat_prompt(
+                name_a=name_a, card_a=cards[slug_a], excerpt_a=pair["excerpt_a"],
+                name_b=name_b, card_b=cards[slug_b], excerpt_b=pair["excerpt_b"],
+                relationship="they know each other through Khalid's circle",
+                topic=pair["topic"], n_turns=n_turns)
+            meta = {"slug": f"{slug_a}--{slug_b}", "speakers": [name_a, name_b],
+                    "topic": pair["topic"]}
+        elif sub_kind == "group_chat":
+            request_id = f"group_{version}_{i:05d}"
+            if request_id in existing:
+                continue
+            group = sampler.sample_group()
+            if group is None:
+                continue
+            card_block = "\n\n".join(
+                f"=== PERSONA: {sampler.display_name(s)} ===\n{cards[s]}"
+                for s in group["slugs"] if s in cards)
+            if "K" in group["speakers"]:
+                card_block = f"=== OWNER CARD (K) ===\n{cards['owner']}\n\n" + card_block
+            seed_text = "\n".join(f"{sp}: {text}" for sp, text in group["turns"])
+            prompt = prompts.group_chat_prompt(
+                cards=card_block, group_name=group["group"], date=group["date"],
+                seed_text=seed_text, speakers=group["speakers"], n_turns=n_turns)
+            meta = {"slug": f"group:{group['group'][:30]}", "speakers": group["speakers"],
+                    "topic": None}
+        else:
+            slug = slugs[i % len(slugs)]
+            request_id = f"chat_{version}_{slug}_{i:05d}"
+            if request_id in existing:
+                continue
+            seed = sampler.sample(slug)
+            if seed is None:
+                continue
+            partner = sampler.display_name(slug)
+            seed_text = "\n".join(
+                f"{'K' if sp == 'K' else partner}: {text}" for sp, text in seed["turns"])
+            prompt = prompts.chat_prompt(
+                owner_card=cards["owner"], partner_name=partner, partner_card=cards[slug],
+                seed_text=seed_text, date=seed["date"], topic=seed["topic"],
+                n_turns=n_turns)
+            meta = {"slug": slug, "partner": partner, "speakers": ["K", partner],
+                    "topic": seed["topic"]}
+
+        meta.update({"owner_alias": fake_owner, "prompt_version": version,
+                     "sub_kind": sub_kind})
         entries.append({
             "id": request_id, "kind": "chat", "model": models[i % len(models)],
-            "prompt_path": _write_request(request_id, prompt),
-            "meta": {"slug": slug, "partner": partner, "owner_alias": fake_owner,
-                     "topic": seed["topic"], "prompt_version": prompts.PROMPT_VERSION},
+            "prompt_path": _write_request(request_id, prompt), "meta": meta,
         })
 
     for i in range(counts["monologue"]):
-        request_id = f"mono_{i:05d}"
+        request_id = f"mono_{prompts.PROMPT_VERSION}_{i:05d}"
         if request_id in existing:
             continue
         genre = rng.choice(prompts.MONOLOGUE_GENRES)
@@ -177,7 +229,7 @@ def plan_pilot(n_requests, models=("sonnet", "opus")) -> int:
                             "رمضان في السودان", "الاسعار", "الاهل", "الشغل", "الكورة",
                             "المطر والخريف", "الجيران", "المواصلات"])
         prompt = prompts.monologue_prompt(_monologue_seed(rng), genre, topic,
-                                          n_words=rng.randint(300, 600))
+                                          n_words=rng.randint(700, 1200))
         entries.append({
             "id": request_id, "kind": "monologue", "model": models[i % len(models)],
             "prompt_path": _write_request(request_id, prompt),
@@ -185,9 +237,9 @@ def plan_pilot(n_requests, models=("sonnet", "opus")) -> int:
                      "prompt_version": prompts.PROMPT_VERSION},
         })
 
-    exemplars = _flores_exemplars(rng)
-    for i, source in enumerate(msa_pool[: counts["transform"]]):
-        request_id = f"trans_{i:05d}"
+    exemplars = _flores_exemplars(rng) if msa_pool else ""
+    for i, source in enumerate(msa_pool[: counts.get("transform", 0)]):
+        request_id = f"trans_{prompts.PROMPT_VERSION}_{i:05d}"
         if request_id in existing:
             continue
         prompt = prompts.transform_prompt(exemplars, source)
@@ -236,13 +288,22 @@ def _run_one(entry):
     if not text.strip():
         return entry, "error", "empty result"
     RAW_DIR.mkdir(parents=True, exist_ok=True)
+    # usage/cost recorded per request so the 50M scale-up decision runs on measured numbers
+    usage = payload.get("usage", {})
     (RAW_DIR / f"{entry['id']}.json").write_text(json.dumps(
         {"id": entry["id"], "kind": entry["kind"], "model": entry["model"],
-         "meta": entry.get("meta", {}), "text": text}, ensure_ascii=False))
+         "meta": entry.get("meta", {}), "text": text,
+         "cost_usd": payload.get("total_cost_usd"),
+         "usage": {k: usage.get(k) for k in ("input_tokens", "output_tokens",
+                                             "cache_read_input_tokens",
+                                             "cache_creation_input_tokens")}},
+        ensure_ascii=False))
     return entry, "ok", None
 
 
 def run(concurrency=3, limit=None) -> int:
+    import threading
+
     pending = [entry for entry in _read_queue()
                if not (RAW_DIR / f"{entry['id']}.json").exists()]
     # cards jump the queue: chats can't even be planned without them
@@ -250,41 +311,53 @@ def run(concurrency=3, limit=None) -> int:
     if limit:
         pending = pending[:limit]
     print(f"{len(pending)} pending requests")
+
+    # Continuous pool, not lock-step batches: an earlier version waited for each batch's
+    # slowest member before starting the next, which left most slots idle (2 of 8 busy).
+    # Workers share one pause deadline so a usage-limit hit stalls everyone together instead
+    # of each thread burning a request to rediscover the same closed window.
+    pause_until = [0.0]
+    pause_lock = threading.Lock()
+
+    def worker(entry):
+        while True:
+            wait = pause_until[0] - time.time()
+            if wait > 0:
+                time.sleep(min(wait, 30))
+                continue
+            result_entry, status, detail = _run_one(entry)
+            if status == "usage_limit":
+                with pause_lock:
+                    if time.time() >= pause_until[0]:
+                        pause_until[0] = time.time() + USAGE_LIMIT_SLEEP
+                        print(f"usage limit hit — pausing all workers "
+                              f"{USAGE_LIMIT_SLEEP//60} min", flush=True)
+                continue
+            return result_entry, status, detail
+
     done = failed = 0
     start = time.time()
-    index = 0
-    while index < len(pending):
-        batch = pending[index : index + concurrency]
-        hit_limit = False
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            for future in as_completed([pool.submit(_run_one, entry) for entry in batch]):
-                entry, status, detail = future.result()
-                if status == "ok":
-                    done += 1
-                elif status == "usage_limit":
-                    hit_limit = True
-                else:
-                    failed += 1
-                    print(f"  {entry['id']}: {detail}", flush=True)
-        if hit_limit:
-            print(f"usage limit hit — sleeping {USAGE_LIMIT_SLEEP//60} min "
-                  f"({done} done so far)", flush=True)
-            time.sleep(USAGE_LIMIT_SLEEP)
-            continue                         # retry the same slice (_run_one skips done ones)
-        # never mutate `pending` mid-loop: an earlier version refiltered it here while the
-        # index kept advancing, which silently skipped half the queue
-        index += concurrency
-        batch_done = done + failed
-        if batch_done and batch_done % 30 < concurrency:
-            rate = done / max(time.time() - start, 1) * 3600
-            print(f"  {done} done, {failed} failed, {rate:.0f}/h", flush=True)
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(worker, entry) for entry in pending]
+        for future in as_completed(futures):
+            entry, status, detail = future.result()
+            if status == "ok":
+                done += 1
+            else:
+                failed += 1
+                print(f"  {entry['id']}: {detail}", flush=True)
+            if (done + failed) % 25 == 0:
+                rate = done / max(time.time() - start, 1) * 3600
+                remaining = len(pending) - done - failed
+                print(f"  {done} done, {failed} failed, {rate:.0f}/h, "
+                      f"~{remaining/max(rate,1):.1f}h left", flush=True)
     print(f"run finished: {done} done, {failed} failed in {(time.time()-start)/60:.1f} min")
     return 0
 
 
 def collect_cards() -> int:
     """Card outputs -> cards/<slug>.md, with a real-name scan before anything is written."""
-    pseudo = Pseudonymizer()
+    pseudo = get_pseudonymizer()
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     written = 0
     for path in sorted(RAW_DIR.glob("card_*.json")):

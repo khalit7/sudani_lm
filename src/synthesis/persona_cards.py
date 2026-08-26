@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 
 from src.synthesis import blocklist
-from src.synthesis.pseudonyms import Pseudonymizer
+from src.synthesis.pseudonyms import get_pseudonymizer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PKB = Path.home() / "personal_knowledge_base"
@@ -156,7 +156,7 @@ def compile_owner(pseudo) -> str:
 
 def main() -> int:
     argparse.ArgumentParser(description=__doc__).parse_args()
-    pseudo = Pseudonymizer()
+    pseudo = get_pseudonymizer()
     vocatives = json.loads((PKB / "vocatives.json").read_text())
     evidence = json.loads((PKB / "evidence.json").read_text())
 

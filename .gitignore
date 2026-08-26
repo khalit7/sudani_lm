@@ -25,3 +25,4 @@ env/
 .ruff_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+src/synthesis/report.md

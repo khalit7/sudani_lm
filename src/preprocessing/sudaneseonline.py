@@ -85,13 +85,36 @@ def decode_page(raw: bytes) -> str:
     return page
 
 
+# Per-post site furniture: timestamp headers, the site's name banner, "my library" links.
+# Left in, these lines recur in thousands of documents and become the strongest n-grams in the
+# corpus — the model would learn to emit forum chrome. The audit also caught them dragging
+# mojibake into the top dialect band.
+BOILERPLATE_RE = re.compile(
+    r"^\d{1,2}:\d{2} [AP]M \w{3}, \d{1,2} \d{4}$"
+    r"|^سودانيز [اأ]ون لاين$"
+    r"|مكتبت[يى] ف[يى] سودانيز\s*اونلاين"
+    r"|^SudaneseOnline Images$"
+    r"|^رابط مختصر$"
+    r"|^مكتبت[يى]$"
+)
+
+
 def clean_fragment(fragment: str) -> str:
     text = TAG_RE.sub("\n", fragment)
     text = html_lib.unescape(text)
     text = fix_mojibake(text)
     text = text.replace("‏", "").replace("�", "")
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
-    return "\n".join(line for line in lines if line)
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        if not line or BOILERPLATE_RE.search(line):
+            continue
+        # a line the round-trip repair could not fix stays mojibake forever — drop it rather
+        # than let ط/ظ soup masquerade as maximally-dialectal text downstream
+        if _mojibake_score(line) > 0.25 and len(ARABIC_RE.findall(line)) > 10:
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def extract_thread(page: str):

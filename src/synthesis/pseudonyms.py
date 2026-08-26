@@ -282,25 +282,52 @@ def _compile_patterns(mapping):
     return patterns
 
 
+# Which identity treatment the synthesis pipeline applies to material sent to Claude.
+# "pseudonyms" was the original plan; the owner overrode it on 2026-08-23: cards, seeds and
+# synthetic data carry the real names — the model is meant to know his actual people. Phones
+# and emails stay masked either way (zero voice signal, pure contact-info surface).
+# The elaf-osman blocklist is a separate rule (PKB DECISIONS.md) and is NOT affected by this.
+POLICY = "real_names"
+
+
+def mask_contacts(text: str) -> str:
+    """Mask phones/emails/handles while preserving ISO dates (which match the phone regex)."""
+    dates = []
+
+    def _shelter(match):
+        dates.append(match.group(0))
+        return f"\x00{len(dates)-1}\x00"
+
+    text = ISO_DATE_RE.sub(_shelter, text or "")
+    text = PHONE_RE.sub("<phone>", text)
+    text = EMAIL_RE.sub("<email>", text)
+    text = HANDLE_RE.sub("<handle>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: dates[int(m.group(1))], text)
+
+
+class MaskOnly:
+    """The real_names policy: contact info masked, names untouched, nothing to scan for."""
+
+    mapping = {}
+
+    def apply(self, text: str) -> str:
+        return mask_contacts(text)
+
+    def scan(self, text: str):
+        return []
+
+
+def get_pseudonymizer():
+    return MaskOnly() if POLICY == "real_names" else Pseudonymizer()
+
+
 class Pseudonymizer:
     def __init__(self, mapping=None):
         self.mapping = mapping or load_map()
         self.patterns = _compile_patterns(self.mapping)
 
     def apply(self, text: str) -> str:
-        # ISO dates match the phone pattern; shelter them, mask phones, put them back —
-        # dates are context the cards need, phone numbers are identity they must lose
-        dates = []
-
-        def _shelter(match):
-            dates.append(match.group(0))
-            return f"\x00{len(dates)-1}\x00"
-
-        text = ISO_DATE_RE.sub(_shelter, text or "")
-        text = PHONE_RE.sub("<phone>", text)
-        text = EMAIL_RE.sub("<email>", text)
-        text = HANDLE_RE.sub("<handle>", text)
-        text = re.sub(r"\x00(\d+)\x00", lambda m: dates[int(m.group(1))], text)
+        text = mask_contacts(text)
         for pattern, replacement in self.patterns:
             text = pattern.sub(replacement, text)
         return text

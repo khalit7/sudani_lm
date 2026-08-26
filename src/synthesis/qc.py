@@ -34,7 +34,7 @@ import zlib
 from collections import Counter
 from pathlib import Path
 
-from src.synthesis.pseudonyms import Pseudonymizer
+from src.synthesis.pseudonyms import get_pseudonymizer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYN_DIR = REPO_ROOT / "data" / "interim" / "synthetic"
@@ -45,7 +45,7 @@ JUDGED_PATH = SYN_DIR / "judged.jsonl"
 VAL_CHATS = REPO_ROOT / "data" / "interim" / "whatsapp" / "val.jsonl"
 FLORES_DEVTEST = REPO_ROOT / "data" / "raw" / "sudanese_flores" / "DEVTEST.jsonl"
 
-MIN_CHAT_TURNS, MAX_CHAT_TURNS = 8, 40
+MIN_CHAT_TURNS, MAX_CHAT_TURNS = 8, 70    # v2 asks for 30-50 turns plus natural bursts
 ARABIC_RE = re.compile(r"[؀-ۿ]")
 
 JUDGE_PROMPT = """أنت خبير في اللهجة السودانية. قيّم النص التالي من 1 إلى 5:
@@ -94,9 +94,11 @@ def parse_chat(payload):
         turns.append((match.group(1).strip(), match.group(2).strip()))
     if not (MIN_CHAT_TURNS <= len(turns) <= MAX_CHAT_TURNS):
         return None
-    partner = payload["meta"].get("partner", "")
+    # k_chats declare ["K", partner]; pair/group chats declare their own speaker rosters
+    allowed = set(payload["meta"].get("speakers")
+                  or ["K", payload["meta"].get("partner", "")])
     speakers = {speaker for speaker, _ in turns}
-    if not speakers <= {"K", partner}:
+    if not speakers <= allowed:
         return None
     if len(speakers) < 2:
         return None
@@ -123,7 +125,7 @@ def degenerate(text):
 
 
 def filter_cmd() -> int:
-    pseudo = Pseudonymizer()
+    pseudo = get_pseudonymizer()
     leak_grams = _load_leakage_ngrams()
     kills = Counter()
     kept = []
@@ -184,7 +186,24 @@ def filter_cmd() -> int:
     return 0
 
 
-def judge_cmd(model="haiku", limit=None) -> int:
+def _judge_one(row, model):
+    result = subprocess.run(
+        ["claude", "-p", "--model", model, "--output-format", "json"],
+        input=JUDGE_PROMPT.format(text=row["qc_text"][:6000]),
+        capture_output=True, text=True, timeout=240)
+    score = None
+    if result.returncode == 0:
+        try:
+            match = re.search(r"[1-5]", json.loads(result.stdout).get("result", ""))
+            score = int(match.group(0)) if match else None
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return {"id": row["id"], "score": score}
+
+
+def judge_cmd(model="haiku", limit=None, concurrency=8) -> int:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     rows = [json.loads(line) for line in FILTERED_PATH.read_text().splitlines() if line.strip()]
     scored_ids = set()
     if JUDGED_PATH.exists():
@@ -194,23 +213,16 @@ def judge_cmd(model="haiku", limit=None) -> int:
     if limit:
         pending = pending[:limit]
     print(f"{len(pending)} to judge")
-    with open(JUDGED_PATH, "a", encoding="utf-8") as fh:
-        for i, row in enumerate(pending):
-            result = subprocess.run(
-                ["claude", "-p", "--model", model, "--output-format", "json"],
-                input=JUDGE_PROMPT.format(text=row["qc_text"][:4000]),
-                capture_output=True, text=True, timeout=240)
-            score = None
-            if result.returncode == 0:
-                try:
-                    match = re.search(r"[1-5]", json.loads(result.stdout).get("result", ""))
-                    score = int(match.group(0)) if match else None
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-            fh.write(json.dumps({"id": row["id"], "score": score}) + "\n")
+    done = 0
+    with open(JUDGED_PATH, "a", encoding="utf-8") as fh, \
+            ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(_judge_one, row, model) for row in pending]
+        for future in as_completed(futures):
+            fh.write(json.dumps(future.result()) + "\n")
             fh.flush()
-            if (i + 1) % 20 == 0:
-                print(f"  {i+1}/{len(pending)}", flush=True)
+            done += 1
+            if done % 50 == 0:
+                print(f"  {done}/{len(pending)}", flush=True)
     return 0
 
 
@@ -237,28 +249,34 @@ def render_cmd(min_score=4) -> int:
         if score is None or score < min_score:
             counts["below_score" if score is not None else "unjudged"] += 1
             continue
+        # provenance travels into the training files: generator + full seed config
+        provenance = {"generator": payload.get("model"), "seed": payload.get("seed")}
         if payload["kind"] == "chat":
-            partner = payload["meta"]["partner"]
-            alias = payload["meta"].get("owner_alias", "K")
-            me = [("ME" if speaker == "K" else partner, text)
+            alias = payload["meta"].get("owner_alias", "Khalid")
+            # only the owner's label differs between the arms; pair/group chats without K
+            # come out identical in both, which is correct — the arms differ on the ME
+            # identity, not on third-party dialogue
+            me = [("ME" if speaker == "K" else speaker, text)
                   for speaker, text in payload["turns"]]
-            pseudo = [(alias if speaker == "K" else partner, text)
+            pseudo = [(alias if speaker == "K" else speaker, text)
                       for speaker, text in payload["turns"]]
             outputs["chats_me.jsonl"].write(json.dumps(
-                {"chat": f"syn:{payload['meta']['slug']}", "text": render_conversation(me)},
+                {"chat": f"syn:{payload['meta']['slug']}",
+                 "text": render_conversation(me), **provenance},
                 ensure_ascii=False) + "\n")
             outputs["chats_pseudo.jsonl"].write(json.dumps(
-                {"chat": f"syn:{payload['meta']['slug']}", "text": render_conversation(pseudo)},
+                {"chat": f"syn:{payload['meta']['slug']}",
+                 "text": render_conversation(pseudo), **provenance},
                 ensure_ascii=False) + "\n")
             counts["chat"] += 1
         elif payload["kind"] == "monologue":
             outputs["monologue.jsonl"].write(json.dumps(
-                {"source": "syn_monologue", "text": payload["qc_text"]},
+                {"source": "syn_monologue", "text": payload["qc_text"], **provenance},
                 ensure_ascii=False) + "\n")
             counts["monologue"] += 1
         else:
             outputs["transformed.jsonl"].write(json.dumps(
-                {"source": "syn_msa2sud", "text": payload["qc_text"]},
+                {"source": "syn_msa2sud", "text": payload["qc_text"], **provenance},
                 ensure_ascii=False) + "\n")
             counts["transform"] += 1
     for handle in outputs.values():
