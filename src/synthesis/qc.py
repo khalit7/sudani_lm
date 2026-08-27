@@ -45,7 +45,10 @@ JUDGED_PATH = SYN_DIR / "judged.jsonl"
 VAL_CHATS = REPO_ROOT / "data" / "interim" / "whatsapp" / "val.jsonl"
 FLORES_DEVTEST = REPO_ROOT / "data" / "raw" / "sudanese_flores" / "DEVTEST.jsonl"
 
-MIN_CHAT_TURNS, MAX_CHAT_TURNS = 8, 70    # v2 asks for 30-50 turns plus natural bursts
+# v3 asks for 30-50 turns, but bursty texture means one "turn" is often several lines and
+# good conversations run to ~120 lines; true runaway loops are caught by degenerate(), so
+# the ceiling only guards absurd outputs.
+MIN_CHAT_TURNS, MAX_CHAT_TURNS = 8, 120
 ARABIC_RE = re.compile(r"[؀-ۿ]")
 
 JUDGE_PROMPT = """أنت خبير في اللهجة السودانية. قيّم النص التالي من 1 إلى 5:
@@ -94,15 +97,26 @@ def parse_chat(payload):
         turns.append((match.group(1).strip(), match.group(2).strip()))
     if not (MIN_CHAT_TURNS <= len(turns) <= MAX_CHAT_TURNS):
         return None
-    # k_chats declare ["K", partner]; pair/group chats declare their own speaker rosters
-    allowed = set(payload["meta"].get("speakers")
-                  or ["K", payload["meta"].get("partner", "")])
-    speakers = {speaker for speaker, _ in turns}
-    if not speakers <= allowed:
+    # k_chats declare ["K", partner]; pair/group chats declare their own speaker rosters.
+    # Matching is lenient where it is unambiguous — models naturally shorten "Safaa Ismaeel"
+    # to "Safaa" and sometimes change case ("NAJLA") — and every accepted variant is
+    # canonicalized back to the declared label so training data stays consistent.
+    declared = payload["meta"].get("speakers") or ["K", payload["meta"].get("partner", "")]
+    canon = {name.lower(): name for name in declared}
+    firsts = {}
+    for name in declared:
+        first = name.split()[0].lower()
+        firsts[first] = None if first in firsts else name      # None = ambiguous prefix
+    normalized = []
+    for speaker, text in turns:
+        key = speaker.lower()
+        match = canon.get(key) or (firsts.get(key) if firsts.get(key) else None)
+        if match is None:
+            return None
+        normalized.append((match, text))
+    if len({speaker for speaker, _ in normalized}) < 2:
         return None
-    if len(speakers) < 2:
-        return None
-    return turns
+    return normalized
 
 
 def degenerate(text):
@@ -182,10 +196,11 @@ def filter_cmd() -> int:
                 if union and len(shingles & other) / union > 0.6:
                     reason = "near_duplicate"
                     break
-        if reason is not None:
-            kills[reason] += 1
-            new_kills.append({"id": payload["id"], "kill": reason})
+        if reason is not None or shingles is None:
+            kills[reason or "format"] += 1
+            new_kills.append({"id": payload["id"], "kill": reason or "format"})
             continue
+        assert shingles is not None
         kept_shingles.append(shingles)
         payload["qc_text"] = text
         kept.append(payload)
