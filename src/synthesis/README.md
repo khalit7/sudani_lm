@@ -15,6 +15,7 @@ The model→task mapping lives in `MODEL_REGISTRY` (`synth_data.py`):
 | model | task | backend |
 |---|---|---|
 | `sonnet` / `opus` / `haiku` | chat | Claude subscription (`claude -p`) |
+| `gpt-5.6-terra` / `gpt-5.5` | chat | OpenAI Codex CLI, ChatGPT account (`codex exec`, read-only sandbox) — the only two models a ChatGPT account permits (probed 2026-08-27) |
 | `gemma3` / `gemma4` | monologue | Ollama (local GPUs) |
 | `jais2-8b` | chat | Ollama (local GPUs) |
 

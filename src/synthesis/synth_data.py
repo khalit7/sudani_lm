@@ -53,6 +53,11 @@ MODEL_REGISTRY = {
     "sonnet": {"task": "chat", "backend": "claude", "model": "sonnet", "concurrency": 8},
     "opus": {"task": "chat", "backend": "claude", "model": "opus", "concurrency": 8},
     "haiku": {"task": "chat", "backend": "claude", "model": "haiku", "concurrency": 8},
+    # OpenAI Codex CLI (owner's ChatGPT account). Probed 2026-08-27: a ChatGPT account
+    # permits exactly these two models — everything else is API-key-only. Chats only.
+    "gpt-5.6-terra": {"task": "chat", "backend": "codex", "model": "gpt-5.6-terra",
+                      "concurrency": 4},
+    "gpt-5.5": {"task": "chat", "backend": "codex", "model": "gpt-5.5", "concurrency": 4},
     "gemma3": {"task": "monologue", "backend": "ollama", "model": "gemma3:27b",
                "concurrency": 2},
     "gemma4": {"task": "monologue", "backend": "ollama", "model": "gemma4:12b",
@@ -224,6 +229,34 @@ def _claude_generate(model, prompt):
                                        "output_tokens": usage.get("output_tokens")}
 
 
+def _codex_generate(model, prompt):
+    """OpenAI Codex CLI, headless: prompt on stdin, final message via --output-last-message.
+
+    read-only sandbox — generation must never execute anything. Usage-limit detection mirrors
+    the claude backend so the shared pause kicks in instead of burning failures.
+    """
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", out_path]
+        if model:
+            cmd += ["-m", model]
+        cmd.append("-")
+        result = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                timeout=900)
+        text = Path(out_path).read_text().strip() if Path(out_path).exists() else ""
+        if result.returncode != 0 or not text:
+            stderr = (result.stderr or result.stdout or "").lower()
+            if "limit" in stderr or "429" in stderr:
+                raise RuntimeError("usage_limit")
+            raise RuntimeError((result.stderr or "codex error")[:200])
+        return text, {}
+    finally:
+        Path(out_path).unlink(missing_ok=True)
+
+
 def _ollama_generate(model, prompt):
     # bakeoff's variant sends think:false with a fallback — without it, thinking-capable
     # models (gemma4, qwen3.x) burn the whole budget inside <think> and return nothing
@@ -266,6 +299,8 @@ def run_model(model_key, n_samples, run_stamp):
             try:
                 if spec["backend"] == "claude":
                     text, extra = _claude_generate(spec["model"], sample["prompt"])
+                elif spec["backend"] == "codex":
+                    text, extra = _codex_generate(spec["model"], sample["prompt"])
                 else:
                     text, extra = _ollama_generate(spec["model"], sample["prompt"])
             except RuntimeError as error:
