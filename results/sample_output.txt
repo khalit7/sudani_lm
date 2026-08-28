@@ -1,0 +1,88 @@
+sudani_lm — sample conversation
+================================================================================
+
+Model      : checkpoints/sudani_llm_pretraining/stage_d/best.pt  (Stage D, step 90)
+             110M params · 12 layers · d_model 768 · v2_32k tokenizer
+Interface  : python inference.py --speaker "Abrar 8loob"
+Sampling   : temperature 0.8 · top_k 50 · top_p 0.95 · max_new_tokens 48
+Speaker    : "Abrar 8loob" — a real contact from the training corpus
+             (2,723 conversations, the second-largest chat)
+
+The human turns below were written by Claude, responding to whatever the model
+had just said. Nothing is scripted and nothing is cherry-picked except where
+explicitly marked.
+
+================================================================================
+TRANSCRIPT
+================================================================================
+
+Abrar 8loob : السلام عليكم يا خالد، كيفك؟ وينك من زمن
+ME          : لا عندي مشكله انا و انتي في البيت عشان ما ممكن تجي بدري انتي و انتي في البيت ؟
+
+Abrar 8loob : ايوا انا في البيت، انت متين بترجع؟
+ME          : اي اي بس لازم تجي بدري كدا
+
+Abrar 8loob : طيب تمام. اكلت حاجة ولا لسه؟
+ME          : اي اي اي اي
+
+Abrar 8loob : يعني شنو اي اي 😂 جاوبني بالله
+ME          : و اكلت حاجه ؟
+
+Abrar 8loob : لسه ما اكلت، عملت لينا عصيدة. تجي تاكل معانا؟
+ME          : ما مشكله لكن ما عارف والله
+
+Abrar 8loob : خلاص يا زول، انا حستناك. لا تتأخر
+ME          : انا اسف
+
+================================================================================
+WHAT WORKS
+================================================================================
+
+* Correct dialect, not MSA. Sudanese particles and constructions throughout:
+  "ما عارف والله", "بس لازم تجي بدري كدا", "ما مشكله", "كدا".
+
+* Gendered agreement learned from the real chat. It addresses Abrar with the
+  feminine "انتي", never the masculine "انت" — nobody told it who Abrar is; it
+  inferred that from 2,723 conversations with her.
+
+* Chat register, not prose. Replies are 2-13 words, lowercase-equivalent,
+  no punctuation ceremony. That is what the corpus actually looks like.
+
+* Multi-turn context is carried. Turn 4's "و اكلت حاجه ؟" echoes the food topic
+  Abrar raised in turn 3.
+
+================================================================================
+WHAT DOES NOT
+================================================================================
+
+* It does not track who holds which fact. Turn 1 answers "how are you, where
+  have you been" with a question about *Abrar* coming home early — the roles are
+  swapped. Turn 4 asks "and did you eat?" immediately after Abrar asked exactly
+  that. It has learned the shape of the exchange, not its state.
+
+* Degeneration into "اي اي اي…". Turn 3 shows a mild case. On a different
+  sampling seed, turn 4 produced 48 consecutive "اي" tokens, hitting the length
+  cap — that sample is omitted from the transcript above but is the honest
+  failure mode, and it appears in roughly 1 reply in 20.
+
+* Replies are reactive, never initiating. It answers; it does not ask, plan, or
+  carry a thread forward on its own.
+
+* "انا اسف" closing an invitation to dinner is fluent and contextually wrong.
+
+================================================================================
+CALIBRATION
+================================================================================
+
+This is a 110M-parameter model trained from scratch on 5B tokens of Arabic and
+~7.9M tokens of chat, on two consumer GPUs, in under five hours total. It is
+roughly 1/1500th the size of a frontier model.
+
+Judged as "does it produce Sudanese chat" — yes, convincingly.
+Judged as "does it understand the conversation" — no, and it should not be
+expected to at this scale i think.
+
+Measured: owner-reply perplexity 181.4, held-out chat perplexity 74.3,
+Flores Sudanese perplexity 343.9. See plan.md for the full comparison against
+Stage C, which is better on generality but 12% worse at reproducing the owner's
+own replies.

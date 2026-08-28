@@ -213,3 +213,85 @@ def test_generation_evaluator_returns_one_sample_per_prompt_and_temperature(mode
     assert len(samples) == 4
     assert {s["temperature"] for s in samples} == {0.0, 0.7}
     assert all(isinstance(s["text"], str) and s["text"] for s in samples)
+
+
+# --- per-source validation (data expansion v2) ------------------------------------------------
+
+def test_per_source_val_reports_each_slice_and_matches_a_manual_forward(
+        tmp_path, model, tokenizer, monkeypatch):
+    """Two named val sources in one stream: both get a ppl, computed only on their own tokens."""
+    import math
+
+    import numpy as np
+    import torch.nn.functional as F
+
+    from src.evaluator import PerSourceValEvaluator
+
+    block = 64
+    rng = np.random.default_rng(0)
+    a = rng.integers(0, 32000, size=3 * block + 1, dtype=np.uint16)   # 3 full blocks
+    b = rng.integers(0, 32000, size=2 * block + 1, dtype=np.uint16)   # 2 full blocks
+    stage_dir = tmp_path / "packed" / "stage_x"
+    stage_dir.mkdir(parents=True)
+    np.concatenate([a, b]).tofile(stage_dir / "val.bin")
+    (stage_dir / "meta.json").write_text(json.dumps({
+        "val_sources": [
+            {"name": "a", "start": 0, "tokens": len(a)},
+            {"name": "b", "start": len(a), "tokens": len(b)},
+        ],
+    }))
+    monkeypatch.setattr("src.evaluator.data_root", tmp_path)
+
+    ev = PerSourceValEvaluator("stage_x", block_size=block, batch_size=2)
+    metrics = ev.evaluate(model, "cpu", tokenizer)
+    assert set(metrics) == {"val_source/a_ppl", "val_source/b_ppl"}
+
+    # manual forward over source b's two blocks must reproduce its number exactly
+    total_nll = total = 0.0
+    for i in range(2):
+        window = torch.from_numpy(
+            b[i * block : (i + 1) * block + 1].astype(np.int64))[None, :]
+        logits = model(window[:, :-1]).float()
+        total_nll += F.cross_entropy(logits.reshape(-1, logits.shape[-1]),
+                                     window[:, 1:].reshape(-1), reduction="sum").item()
+        total += window[:, 1:].numel()
+    assert metrics["val_source/b_ppl"] == pytest.approx(math.exp(total_nll / total), rel=1e-4)
+
+
+def test_per_source_val_skips_a_source_too_short_for_one_block(tmp_path, model, tokenizer,
+                                                               monkeypatch):
+    import numpy as np
+
+    from src.evaluator import PerSourceValEvaluator
+
+    stage_dir = tmp_path / "packed" / "stage_x"
+    stage_dir.mkdir(parents=True)
+    np.arange(200, dtype=np.uint16).tofile(stage_dir / "val.bin")
+    (stage_dir / "meta.json").write_text(json.dumps({
+        "val_sources": [
+            {"name": "ok", "start": 0, "tokens": 130},
+            {"name": "tiny", "start": 130, "tokens": 70},   # < block_size + 1
+        ],
+    }))
+    monkeypatch.setattr("src.evaluator.data_root", tmp_path)
+
+    metrics = PerSourceValEvaluator("stage_x", block_size=128).evaluate(model, "cpu", tokenizer)
+    assert "val_source/ok_ppl" in metrics
+    assert "val_source/tiny_ppl" not in metrics
+
+
+def test_jsonl_perplexity_evaluator_reads_any_interim_file(tmp_path, model, tokenizer,
+                                                           monkeypatch):
+    from src.evaluator import JsonlPerplexityEvaluator
+
+    rows = [{"source": "lisan", "text": "الزول دا كلامو سمح شديد والله"}] * 6
+    path = tmp_path / "data" / "interim" / "sudani" / "lisan_holdout.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows))
+    monkeypatch.setattr("src.evaluator.data_root", tmp_path / "data")
+
+    ev = JsonlPerplexityEvaluator("lisan_holdout",
+                                  "data/interim/sudani/lisan_holdout.jsonl")
+    metrics = ev.evaluate(model, "cpu", tokenizer)
+    # a random-init model should sit in the vicinity of uniform over the vocab
+    assert 0.2 * len(tokenizer) < metrics["lisan_holdout/ppl"] < 5 * len(tokenizer)

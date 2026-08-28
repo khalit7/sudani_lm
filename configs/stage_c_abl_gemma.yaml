@@ -1,0 +1,109 @@
+# Ablation A — Stage C with the v2 acquisition track added (plan.md Part IV, gate 4).
+#
+# Identical recipe to configs/stage_c.yaml (same LR, schedule shape, ~3 epochs) over the
+# stage_c_abl_gemma manifest pack (23.53M tokens vs v1's 14.52M). Baseline to beat (v1 stage_c):
+# chat-holdout 63.3 · Flores-Sud 255.9 · MMLU loglik 0.310.
+#
+#   torchrun --nproc_per_node=2 train.py --config configs/stage_c_abl_gemma.yaml \
+#     --init-from checkpoints/sudani_llm_pretraining/stage_b_110m/best.pt
+
+run:
+  project_name: "sudani_llm_pretraining"
+  run_name: "stage_c_abl_gemma"
+  run_description: "Ablation: control (abl_a) + gemma-generated monologues only"
+
+model:
+  name: "init_decoder"
+  config:
+    d_model: 768
+    num_layers: 12
+    num_heads: 12
+    max_seq_len: 1024
+    dropout: 0.0
+    tie_embeddings: True
+
+train:
+  seed: 67
+  block_size: 1024
+
+  # 2 GPUs x 16 x 1024 x 4 accum = 131,072 tokens/step.
+  # The pack holds 23.53M tokens; 540 steps is ~3 epochs, matching v1's schedule shape.
+  micro_batch_size: 16
+  grad_accum: 4
+  max_steps: 581
+
+  bf16: True
+  compile: True
+  grad_clip: 1.0
+
+  optimiser:
+    name: "adamw"
+    config:
+      lr: 0.00006          # 10% of Stage B's peak: adapting, not re-learning
+      betas: [0.9, 0.95]
+      eps: 1.0e-8
+      weight_decay: 0.1
+
+  scheduler:
+    warmup_percentage: 0.05
+    min_lr_ratio: 0.1
+
+  dataloader:
+    stage: "stage_c_abl_gemma"
+
+  val_batch_size: 16
+  val_max_batches: 25      # reads the head of val.bin = the whatsapp slice
+  eval_every: 25
+  checkpoint_every: 25
+  log_every: 10
+
+  peak_flops_per_gpu: 2.39e+14
+
+eval:
+  owner_reply:
+    freq: 25
+    run_at_0: True
+    max_examples: 300
+
+  chat_holdout:
+    freq: 25
+    run_at_0: True
+    max_examples: 400
+
+  flores:
+    freq: 25
+    run_at_0: True
+    split: "DEV"
+    batch_size: 16
+
+  # native-dialect holdout, independent of both the owner's contacts and Flores translationese
+  lisan_holdout:
+    kind: jsonl_ppl
+    path: data/interim/sudani/lisan_holdout.jsonl
+    freq: 25
+    run_at_0: True
+
+  # per-source ppl over the manifest's val slices (whatsapp / oddadmix / lyrics)
+  per_source_val:
+    freq: 25
+    run_at_0: True
+
+  mmlu_loglikelihood:
+    freq: 100
+    run_at_0: True
+    max_examples: 500
+    batch_size: 16
+
+  generation:
+    freq: 100
+    run_at_0: True
+    prompts:
+      - "<s><|conv|><|turn|>Mukh: كيف الحال يا زول؟<|end|><|turn|>ME:"
+      - "<s><|conv|><|turn|>ME: شنو الاخبار<|end|>"
+      - "<s>الخرطوم هي"
+    temperatures: [0.0, 0.7]
+    max_new_tokens: 48
+
+monitor:
+  grad_norm:
+    freq: 25

@@ -1,20 +1,30 @@
-"""Collect the three public Sudanese corpora into one document stream.
+"""Collect the public Sudanese corpora into one document stream.
 
-Small — about 0.64M tokens against the WhatsApp export's ~7M — but it is the only Sudanese text
-in the project that is not the owner's own chat, so it is worth having in the continued-pretraining
+Small — under 1M tokens against the WhatsApp export's ~7M — but it is the only Sudanese text in
+the project that is not the owner's own chat, so it is worth having in the continued-pretraining
 mix even at that size.
 
-All three were released as *sentiment* corpora, so the labels are stripped and only the text is
-kept. Two of them need cleaning first; see the notes on each loader.
+Five sources (run scripts/download_sudanese_sources.py for the last two):
+  - the three original sentiment corpora (labels stripped; two need cleaning, see the loaders),
+  - Lisan-Sudanese sentences via the TTS mirrors — the cleanest verified-dialect text that
+    publicly exists (CC BY 4.0),
+  - the "organic Sudanese" app sample (CC BY 4.0), 300 rows of genuinely spontaneous chat.
 
-Output: data/interim/sudani/all.jsonl
+A slice of Lisan is held out as its own perplexity eval: unlike the WhatsApp holdout it shares
+no people with training, and unlike Flores it is native dialect rather than translationese — so
+it is the one number that can catch "memorised the contacts" and "learned translator Sudanese"
+at the same time.
+
+Output: data/interim/sudani/all.jsonl, data/interim/sudani/lisan_holdout.jsonl
 
 Usage:  python -m src.preprocessing.sudani
 """
 
 import argparse
+import csv
 import glob
 import json
+import random
 import re
 from pathlib import Path
 
@@ -75,11 +85,58 @@ def load_sudsenti():
     return texts
 
 
+def load_lisan():
+    """Lisan-Sudanese sentences, mirrored inside two TTS datasets with identical text.
+
+    Facebook/YouTube comments transcribed and verified by native speakers (Jarrar et al.,
+    CC BY 4.0). The two mirrors duplicate each other, which the global dedup absorbs.
+    """
+    texts = []
+    for path in sorted(glob.glob(str(DATA_RAW / "lisan" / "*.jsonl"))):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                texts.append(clean(json.loads(line)["text"]))
+    if not texts:
+        print("  WARNING: lisan not found, skipping")
+    return texts
+
+
+ARABIC_RE = re.compile(r"[؀-ۿ]")
+
+
+def load_organic():
+    """The 'organic Sudanese dialect' app sample: 300 spontaneous messages, CC BY 4.0.
+
+    Collected from a live translation app, so a handful of rows are foreign one-word probes
+    ("paard") or other dialects. Rows must be majority-Arabic; MIN_CHARS handles the probes.
+    """
+    path = DATA_RAW / "organic_sudanese" / "sudanese_dialect_dataset.csv"
+    if not path.exists():
+        print("  WARNING: organic_sudanese not found, skipping")
+        return []
+    texts = []
+    with open(path, encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            text = clean(row.get("source_text"))
+            if len(ARABIC_RE.findall(text)) > len(text) * 0.5:
+                texts.append(text)
+    return texts
+
+
+# Held-out share of Lisan, split before training data is written so no pipeline change can leak
+# it. ~280 sentences ≈ 9K tokens: small, but perplexity over it is stable enough to compare
+# checkpoints, which is all it is for.
+LISAN_HOLDOUT_FRACTION = 0.15
+SEED = 67
+
+
 def collect():
     sources = {
         "sudanese_tweets": load_arrow("sudanese_tweets", "Tweet"),
         "sudanese_tweets_tele": load_arrow("sudanese_tweets_tele", "Tweet_Text", fix_ya=True),
         "sudsenti": load_sudsenti(),
+        "lisan": load_lisan(),
+        "organic_sudanese": load_organic(),
     }
     documents, seen = [], set()
     for name, texts in sources.items():
@@ -101,13 +158,27 @@ def collect():
 def main() -> int:
     argparse.ArgumentParser(description=__doc__).parse_args()
     documents = collect()
+
+    lisan = [d for d in documents if d["source"] == "lisan"]
+    order = list(range(len(lisan)))
+    random.Random(SEED).shuffle(order)
+    holdout = {id(lisan[i]) for i in order[: int(len(lisan) * LISAN_HOLDOUT_FRACTION)]}
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "all.jsonl"
-    with open(out, "w", encoding="utf-8") as fh:
+    held_path = OUT_DIR / "lisan_holdout.jsonl"
+    kept = held = 0
+    with open(out, "w", encoding="utf-8") as fh, open(held_path, "w", encoding="utf-8") as hh:
         for doc in documents:
-            fh.write(json.dumps(doc, ensure_ascii=False) + "\n")
+            if id(doc) in holdout:
+                hh.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                held += 1
+            else:
+                fh.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                kept += 1
     chars = sum(len(d["text"]) for d in documents)
-    print(f"\n{len(documents):,} documents, {chars/1e6:.2f}M chars -> {out}")
+    print(f"\n{kept:,} documents ({chars/1e6:.2f}M chars) -> {out}")
+    print(f"{held:,} Lisan sentences held out -> {held_path}")
     return 0
 
 
