@@ -2,10 +2,12 @@
 notes.md
 plan.md
 
-# Data: ignore everything, keep only the datasheet
+# Data: ignore everything, keep only the sheets
 data/**
 !data/
 !data/DATASHEET.md
+!data/SYNTHSHEET.md
+!data/SCRAPESHEET.md
 
 # Training outputs
 checkpoints/

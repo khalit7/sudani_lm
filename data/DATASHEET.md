@@ -37,8 +37,8 @@ count is derived from an exact sum of the corpus's own `metadata.token_count` sc
 `src/tokenizer/` for tokenizer building, `src/dataset/` for the runtime loaders). Sources are
 immutable and live under `data/raw/<dataset>/`, one folder per dataset. Derived artifacts —
 `data/interim/` for intermediate splits and `data/packed/<stage>/` for training-ready token streams —
-are regenerable and not documented here. Everything under `data/` except this file is gitignored, so
-no raw sample of any dataset is kept in the repository; the per-dataset examples below are the
+are regenerable and not documented here. Everything under `data/` except the sheets (`DATASHEET.md`, `SYNTHSHEET.md`,
+`SCRAPESHEET.md`) is gitignored, so no raw sample of any dataset is kept in the repository; the per-dataset examples below are the
 canonical record of what each one looks like.
 
 Keep this file current when a dataset is added, removed, or re-scoped.
@@ -422,3 +422,15 @@ dialect-seasoned opinion; <0.3 is MSA news.
 
 - **Path:** `data/interim/synthetic/situations.jsonl` (~2,000 entries) · **Built:** 2026-08-27, offline, via Verbalized Sampling (Claude Sonnet, k=8 candidates with probabilities per call)
 - **Role:** the only topic source the generators ever see — two-sentence Sudanese situations with a causal hook, rooted in the personas' measured topic distributions × an attribute grid (time-of-day / emotional valence / arc / media). Replaces flat topic nouns; the generator never free-chooses a topic (mode-collapse guard). Regenerable with `python -m src.synthesis.situations build`.
+
+### Acquisition wave 3 (audited 2026-08-28, crawls in progress)
+
+| Source | Category | Est. volume | Dialect | Status |
+|---|---|---|---|---|
+| Telegram public channels (5 complete: novelsforus2, klam_sudany, sudanesenovels, Sd_rewaya3t, sudanes0; Diwansha3r unreachable — web preview disabled) | social/serial fiction | 1,953 preview pages, **162 MB** raw | **very high** (pure عامي) | **crawled** (`data/raw/telegram/`, `scripts/scrape_telegram.py`) |
+| [alnilin.com](https://www.alnilin.com) via open WP REST | news + **561,752 reader comments** | ~550K articles + comments | articles low (MSA) / comments **high** | crawling (`data/raw/alnilin/`, `scripts/scrape_alnilin.py`) |
+| anasudani.net forum (phpBB, frozen 2017, 1.16M posts, no robots restrictions) | forum | ~1.16M posts | high | queued — scraper next |
+| Dead vBulletin forums via Wayback (sudanyat, mugrn, algorer, sudanelite, alhasahisa) | forums | unknown | high | queued |
+| **Excluded on explicit refusal**: alrakoba.net + vb.alrakoba.net (145K threads), altaghyeer.info, sudanakhbar.com — all carry `Content-Signal: ai-train=no` and/or disallow AI crawlers; respected | — | — | — | excluded |
+
+All wave-3 crawls: single-threaded, rate-limited, honest UA, robots-respecting; private use only, never redistributed.
