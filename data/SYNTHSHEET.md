@@ -149,7 +149,7 @@ embedding nearest-neighbour distance against real-corpus reference rows.
   (owner decision 2026-08-23: real person details throughout).
 - The real WhatsApp corpus is private, is never in the repo, and is never redistributed;
   synthetic output is checked against the held-out slice for leakage.
-- Everything under `data/` except DATASHEET is gitignored.
+- Everything under `data/` except the sheets (`DATASHEET.md`, `SYNTHSHEET.md`, `SCRAPESHEET.md`) is gitignored.
 
 ## 8. Production state — measured 2026-08-28
 

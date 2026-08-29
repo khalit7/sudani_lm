@@ -8,7 +8,8 @@ fires constantly.
 Order matters and is cheapest-first:
   1. format validity (chat parses into turns, expected speakers, sane turn count)
   2. degeneration (repeated n-grams, line repeats, compression ratio)
-  3. real-name scan (pseudonym map — nothing real may survive into training data)
+  3. real-name scan — a no-op under the real_names policy (owner decision 2026-08-23);
+     re-activates automatically if pseudonymization is ever switched back on
   4. leakage (8-gram overlap vs WhatsApp val chats and Flores DEVTEST → hard reject;
      8-gram overlap vs the request's own seed → regurgitation reject)
   5. near-duplicate dedup across the kept pool (shingle Jaccard)

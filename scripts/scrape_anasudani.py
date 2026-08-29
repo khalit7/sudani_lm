@@ -6,7 +6,7 @@ sweeping ids.
 
 Two resumable phases:
   discover  walk every forum's listing pages -> data/raw/anasudani/topics.txt (forum, topic)
-  fetch     每 topic page (viewtopic, paginated) -> html/t<ID>_s<START>.html.gz
+  fetch     per topic page (viewtopic, paginated) -> html/t<ID>_s<START>.html.gz
 
 Same politeness contract as every crawler here: single-threaded, fixed delay, honest UA,
 backoff, hard stop on consecutive failures.
@@ -32,24 +32,29 @@ HTML_DIR = RAW_DIR / "html"
 BASE = "https://www.anasudani.net/forum/"
 USER_AGENT = "Mozilla/5.0 (compatible; sudani-lm-crawler; personal research use)"
 MAX_CONSECUTIVE_FAILURES = 15
-TOPICS_PER_LISTING = 40          # phpBB default page size observed
-POSTS_PER_PAGE = 10
+# 20, not 40: the forum's own pagination links step by 20. The raw count of viewtopic links
+# per listing page overstates the step (stickies repeat on every page) — stepping 40 silently
+# skipped every other page and halved the first discovery run.
+TOPICS_PER_LISTING = 20
 
 TOPIC_RE = re.compile(r"viewtopic\.php\?[^\"']*t=(\d+)")
 FORUM_RE = re.compile(r"viewforum\.php\?f=(\d+)")
-# phpBB pagination announces total pages via the last start= offset on the page
-NEXT_START_RE = re.compile(r"viewtopic\.php\?[^\"']*start=(\d+)")
 
 
 def _get(session, url, failures):
+    """(text, failures, status). 404 is NOT a failure — the forum's listings reference
+    deleted topics, and a run of dead ids must not trip the consecutive-failure abort."""
     try:
         response = session.get(url, timeout=45)
         if response.status_code == 200:
-            return response.text, 0
+            return response.text, 0, 200
+        if response.status_code == 404:
+            return None, failures, 404
+        status = response.status_code
     except requests.RequestException:
-        pass
+        status = 0
     time.sleep(min(2 ** (failures + 1), 120))
-    return None, failures + 1
+    return None, failures + 1, status
 
 
 def discover(session, delay) -> int:
@@ -57,7 +62,7 @@ def discover(session, delay) -> int:
     seen = set()
     if TOPICS_PATH.exists():
         seen = {line.split()[1] for line in TOPICS_PATH.read_text().splitlines() if line}
-    index, failures = _get(session, BASE, 0)
+    index, failures, _ = _get(session, BASE, 0)
     if index is None:
         print("index unreachable")
         return 1
@@ -67,12 +72,15 @@ def discover(session, delay) -> int:
     with open(TOPICS_PATH, "a", encoding="utf-8") as fh:
         for forum in forums:
             start, new_in_forum = 0, 0
+            prev_topics = None
             while True:
-                page, failures = _get(
+                page, failures, status = _get(
                     session, f"{BASE}viewforum.php?f={forum}&start={start}", failures)
                 if failures >= MAX_CONSECUTIVE_FAILURES:
                     print("aborting: repeated failures")
                     return 1
+                if status == 404:
+                    break
                 if page is None:
                     continue
                 topics = set(TOPIC_RE.findall(page))
@@ -82,8 +90,13 @@ def discover(session, delay) -> int:
                     fh.write(f"{forum} {topic}\n")
                 new_in_forum += len(fresh)
                 fh.flush()
-                if not fresh:                       # walked past the last page
+                # Termination: past-the-end pages are not empty (a sticky persists) and
+                # breaking on no-FRESH-topics broke resume (seen is preloaded, so page 1 of
+                # every forum looked stale). The reliable signal is REPETITION — past the
+                # last page phpBB serves the identical topic set every time.
+                if not topics or topics == prev_topics:
                     break
+                prev_topics = topics
                 start += TOPICS_PER_LISTING
                 time.sleep(delay)
             print(f"  forum {forum}: {new_in_forum} topics", flush=True)
@@ -95,16 +108,25 @@ def fetch(session, delay) -> int:
     HTML_DIR.mkdir(parents=True, exist_ok=True)
     rows = [line.split() for line in TOPICS_PATH.read_text().splitlines() if line.strip()]
     done_first_pages = {p.name for p in HTML_DIR.glob("t*_s0.html.gz")}
+    dead_path = RAW_DIR / "dead.txt"
+    dead = set(dead_path.read_text().split()) if dead_path.exists() else set()
     fetched = failures = 0
     start_time = time.time()
     for forum, topic in rows:
         first = HTML_DIR / f"t{topic}_s0.html.gz"
-        if first.name in done_first_pages:
+        if first.name in done_first_pages or topic in dead:
             continue
-        page, failures = _get(session, f"{BASE}viewtopic.php?f={forum}&t={topic}", failures)
+        page, failures, status = _get(
+            session, f"{BASE}viewtopic.php?f={forum}&t={topic}", failures)
         if failures >= MAX_CONSECUTIVE_FAILURES:
             print("aborting: repeated failures")
             return 1
+        if status == 404:
+            dead.add(topic)
+            with open(dead_path, "a") as dh:
+                dh.write(topic + "\n")
+            time.sleep(delay)
+            continue
         if page is None:
             continue
         first.write_bytes(gzip.compress(page.encode()))
@@ -118,7 +140,7 @@ def fetch(session, delay) -> int:
             if extra.exists():
                 continue
             time.sleep(delay)
-            page2, failures = _get(
+            page2, failures, _ = _get(
                 session, f"{BASE}viewtopic.php?f={forum}&t={topic}&start={offset}", failures)
             if page2 is not None:
                 extra.write_bytes(gzip.compress(page2.encode()))
