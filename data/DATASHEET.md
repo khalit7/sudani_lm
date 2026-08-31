@@ -45,40 +45,61 @@ Keep this file current when a dataset is added, removed, or re-scoped.
 
 ---
 
-## Summary
+## Summary — the single source of truth for ALL data
 
-| Dataset | Role | Local path | Tokens | Size (MB) | License |
-|---|---|---|---|---|---|
-| [ArabicWeb24](https://huggingface.co/datasets/lightonai/ArabicWeb24) | **Stages A & B** pretraining (5B of 13.49B) **+ 40% replay in Stage C** | `data/raw/arabicweb24/` | **33.9B** | 189,378 | ODC-BY |
-| [SmolKalam](https://huggingface.co/datasets/AdaMLLab/SmolKalam-Arabic-Conversational-SFT) | ⚠️ **not used** — only fed the SFT stage the ablation dropped | `data/raw/smolkalam/` | **1.62B** | 3,366 | Apache-2.0 |
-| [InstAr-500k](https://huggingface.co/datasets/ClusterlabAi/InstAr-500k) | ⚠️ **not used** — never entered any packed stage | `data/raw/instar500k/` | **147.2M** | 1,043 | Apache-2.0 |
-| WhatsApp export (personal) | **Stage C** (all of it) **and Stage D** (owner-heavy chats, masked); held-out chats are the main metric | `data/raw/whatsapp/` | **10.47M** | 138 | private, not redistributable |
-| [ArabicMMLU](https://huggingface.co/datasets/MBZUAI/ArabicMMLU) | Eval — MSA forgetting guard in Stages C/D | `data/raw/arabicmmlu/` | **556.4K** | 8 | CC-BY-NC-4.0 |
-| [SudSenti](https://github.com/mustafa20999/Sudanese-Arabic-Sentiment-Datasets) | **Stage C**, upsampled ×3 | `data/raw/sudsenti/` | **381.6K** | 2 | unstated (academic release) |
-| [Sudanese_Dialect_Tweet_Tele](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet_Tele) | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets_tele/` | **204.0K** | 1 | unstated |
-| [Sudanese_Flores](https://huggingface.co/datasets/McGill-NLP/Sudanese_Flores) | Eval — independent Sudanese signal (DEV tracked; DEVTEST unused, held back) | `data/raw/sudanese_flores/` | **140.9K** | 1 | unstated (FLORES derivative) |
-| [Sudanese_Dialect_Tweet](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet) | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets/` | **50.0K** | 1 | unstated |
+One row per dataset, every dataset the project holds. **Added**: w1 = original stack
+(2026-08-16), w2 = data-expansion v2 (2026-08-22), w3 = acquisition wave 3 + final sweep
+(2026-08-28 → 08-31). Tokens are exact (project tokenizer, v2_32k); gold/seasoned/silver =
+dialect-score bands ≥0.8 / 0.5–0.8 / <0.5; **TBC** cells are filled when their count or
+crawl finishes. Dialect quartiles are per-doc [25% / median / 75%]; "—" = not scored
+(MSA corpora, evals, non-text). Scraped rows are authors' copyright, **private use only,
+never redistributed**; details per dataset in the sections below.
 
-**Total on disk: 193,936 MB ≈ 189.4 GB** (`data/raw/`), holding **≈35.7B tokens**.
+| Dataset | Added | Status | Role | Local path | Raw size (MB) | Tokens | Dialect (quartiles) | License |
+|---|---|---|---|---|---|---|---|---|
+| [ArabicWeb24](https://huggingface.co/datasets/lightonai/ArabicWeb24) | w1 | ready | **Stages A & B** pretraining (5B of 13.49B) **+ 40% replay in Stage C** | `data/raw/arabicweb24/` | 189,378 | **33.9B** | — | ODC-BY |
+| [SmolKalam](https://huggingface.co/datasets/AdaMLLab/SmolKalam-Arabic-Conversational-SFT) | w1 | ⚠️ not used | only fed the SFT stage the ablation dropped | `data/raw/smolkalam/` | 3,366 | **1.62B** | — | Apache-2.0 |
+| [InstAr-500k](https://huggingface.co/datasets/ClusterlabAi/InstAr-500k) | w1 | ⚠️ not used | never entered any packed stage | `data/raw/instar500k/` | 1,043 | **147.2M** | — | Apache-2.0 |
+| WhatsApp export (personal) | w1 | ready | **Stage C** (all of it) **and Stage D** (owner-heavy chats, masked); held-out chats are the main metric | `data/raw/whatsapp/` | 138 | **10.47M** | — (all-dialect by construction) | private, not redistributable |
+| [ArabicMMLU](https://huggingface.co/datasets/MBZUAI/ArabicMMLU) | w1 | eval only | MSA forgetting guard in Stages C/D | `data/raw/arabicmmlu/` | 8 | **556.4K** | — | CC-BY-NC-4.0 |
+| [SudSenti](https://github.com/mustafa20999/Sudanese-Arabic-Sentiment-Datasets) | w1 | ready | **Stage C**, upsampled ×3 | `data/raw/sudsenti/` | 2 | **381.6K** | — | unstated (academic release) |
+| [Sudanese_Dialect_Tweet_Tele](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet_Tele) | w1 | ready | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets_tele/` | 1 | **204.0K** | — | unstated |
+| [Sudanese_Flores](https://huggingface.co/datasets/McGill-NLP/Sudanese_Flores) | w1 | eval only | independent Sudanese signal (DEV tracked; **DEVTEST held out of everything**, enforced by the 8-gram screen) | `data/raw/sudanese_flores/` | 1 | **140.9K** | — | unstated (FLORES derivative) |
+| [Sudanese_Dialect_Tweet](https://huggingface.co/datasets/arbml/Sudanese_Dialect_Tweet) | w1 | ready | **Stage C**, upsampled ×3 | `data/raw/sudanese_tweets/` | 1 | **50.0K** | — | unstated |
+| [Tarab — Sudanese slice](https://huggingface.co/datasets/drelhaj/Tarab) | w2 | ready | **Stage C v2**, capped ~2% of mixture | `data/raw/tarab/` | 16 | **428.8K** (post-dedup) | — | CC-BY-4.0 |
+| [Lisan-Sudanese](https://huggingface.co/datasets/AymanMansour/Lisan-Sudanese-TTS-Dataset) (via TTS mirrors) | w2 | ready | **Stage C v2** + **Lisan holdout eval** (15% held out) | `data/raw/lisan/` | 1 | **47.0K** | — | CC-BY-4.0 |
+| [Organic Sudanese sample](https://huggingface.co/datasets/ebubekr53/organic-sudanese-arabic-dialect-dataset) | w2 | ready | **Stage C v2** (via `sudani.py`) | `data/raw/organic_sudanese/` | 1 | **3.6K** | — | CC-BY-4.0 |
+| [Alexandria — SD subset](https://huggingface.co/datasets/UBC-NLP/alexandria) | w2 | ⚠️ reserved | eval/seed material only, not training | `data/raw/alexandria_sd/` | 1 | 345 conversations | — | CC-BY-NC-4.0 |
+| oddadmix Sudanese transcripts ([podcast](https://huggingface.co/datasets/oddadmix/arabic-audio-collection-sudanese-sudan-podcast), nuuar, gobara) | w2 | ready | **Stage C v2** | `data/raw/oddadmix/` | 26 | **2.49M** (255 episodes, 6,545 docs) | — | unstated (scraped YouTube) — private use only |
+| [sudaneseonline.com forum crawl](https://sudaneseonline.com/board/index.htm) (69,633 threads, 99.4% of site) | w2 | ready | **Stage C v2**, dialect-ranked: mixture takes ≥0.5 ≈ **19.6M** | `data/raw/sudaneseonline/` → `data/interim/sudaneseonline/` | 1,547 | **~243M** (gold ≈5.8M, ≥0.5 ≈19.6M) | banded 2026-08-23 | private use only |
+| Telegram channels ×16 (nasra8ya, rwayatSudan, novelsforus2, …) | w3 | ready | **Stage C v2** — largest gold source in the project | `data/raw/telegram/` → `data/interim/telegram/` | 632 | **58.1M** (gold **47.1M**, seasoned 4.6M, silver 6.4M) | [0.88 / 0.973 / 0.991] | private use only |
+| anasudani.net forum (phpBB, 47,827 topic docs) | w3 | ready | **Stage C v2**, dialect-ranked | `data/raw/anasudani/` → `data/interim/anasudani/` | 772 | **64.6M** (gold 9.7M, seasoned 7.2M, silver 47.7M) | [0.051 / 0.241 / 0.689] | private use only |
+| alnilin.com reader comments (158,896 article-grouped docs) | w3 | ready | **Stage C v2** — comment gold | `data/raw/alnilin/` → `data/interim/alnilin_comments/` | 2,202 (shared with posts) | **42.6M** (gold 9.0M, seasoned 11.5M, silver 22.1M) | [0.381 / 0.702 / 0.912] | private use only |
+| alnilin.com articles (536,340 docs) | w3 | ready | silver MSA reservoir, bottom-ranked | `data/raw/alnilin/` → `data/interim/alnilin_posts/` | ″ | **251.2M** (gold 3.4M, seasoned 4.8M, silver 243.0M) | [0.01 / 0.029 / 0.095] | private use only |
+| sudanile.com articles (141,508 docs) | w3 | ready | silver MSA reservoir | `data/raw/sudanile/` → `data/interim/sudanile_posts/` | 1,368 | **188.8M** (gold 1.6M, seasoned 4.0M, silver 183.2M) | [0.019 / 0.048 / 0.132] | private use only |
+| koorasudan.net comments (16,084 docs) | w3 | ready | **Stage C v2** — football-fan dialect | `data/raw/koorasudan/` → `data/interim/koorasudan_comments/` | 518 (shared with posts) | **3.2M** (gold 0.5M, seasoned 0.8M, silver 2.0M) | [0.337 / 0.624 / 0.863] | private use only |
+| koorasudan.net articles (127,832 docs) | w3 | ready | silver sports MSA | `data/raw/koorasudan/` → `data/interim/koorasudan_posts/` | ″ | **49.8M** (gold 1.2M, seasoned 1.8M, silver 46.8M) | [0.024 / 0.068 / 0.196] | private use only |
+| cover-sd.com articles (1,653 docs) | w3 | ready | silver | `data/raw/cover_sd/` → `data/interim/cover_sd_posts/` | 4 | **0.4M** (silver 0.4M) | [0.028 / 0.13 / 0.357] | private use only |
+| Blogger cluster ×12 (1,419 posts) | w3 | ready | **Stage C v2** — dialect lives in sudanese_novels/katabsudsnese/hageebatalfun; delta blogs are MSA | `data/raw/blogger/` → `data/interim/blogger/` | 30 | **1.3M** (gold 0.2M, seasoned 0.2M, silver 1.0M) | [0.016 / 0.063 / 0.227] | private use only |
+| aghaniwamthal.com (564 docs) | w3 | ready | **Stage C v2** — proverbs + lyrics | `data/raw/small_sites/` → `data/interim/small_sites/aghaniwamthal/` | 54 | **0.24M** (gold 0.03M, seasoned 0.03M, silver 0.18M) | [0.076 / 0.276 / 0.669] | private use only |
+| Dead-forum archives — Wayback ×7 domains + Common Crawl ×4 (cross-source deduped) | w3 | **crawling** (~3–4 days) | **Stage C v2** once miners finish | `data/raw/wayback/`, `data/raw/commoncrawl/` → `data/interim/vbarchive/<domain>/` | 913+ (growing) | **TBC** (sudanesesongs partial: 2,081 docs / 4.9M chars) | TBC | private use only |
+| Synthetic pilot pool (QC-passed: 2,119 chats + 2,042 monologues + 12 transforms; see SYNTHSHEET) | w3 | ready (pilot); production run pending | **Stage C v2** synthetic side, ≤50% cap | `data/interim/synthetic/` | 254 | **≈5.1M** kept | judge-gated ≥4/5 | self-generated, private |
+| [muzammilsoft/Sudanese_dialect_dataset](https://huggingface.co/datasets/muzammilsoft/Sudanese_dialect_dataset) (LLM-generated) | w3 | **pending QC** | candidate for the synthetic pool only; never counts as organic | `data/raw/hf_muzammilsoft/` | 13 | **TBC — unevaluated** | TBC | CC-BY-4.0 |
 
-ArabicWeb24 is 97.6% of that footprint. Everything targeting Sudanese — the three public corpora
-plus the personal chat export — is **11.1M tokens**, or 0.03% of the total.
+**Total on disk: ≈197 GB** (`data/raw/`, measured 2026-08-31). ArabicWeb24 is ~96% of that
+footprint. The Sudanese-register side has grown from **11.1M tokens** (w1, 0.03% of the total)
+to **≈73M gold + ≈35M seasoned** across the wave-3 corpora alone (all counts now exact except
+the still-crawling forum archives), plus sudaneseonline's ≥0.5 band (19.6M) and the w2
+acquisitions — **≈130M dialect-bearing tokens in total** — with silver MSA news reservoirs of
+**≈476M** behind them.
 
-### Data expansion v2 (plan.md Part IV, acquired 2026-08-22)
-
-| Dataset | Role | Local path | Tokens | License |
-|---|---|---|---|---|
-| [Tarab — Sudanese slice](https://huggingface.co/datasets/drelhaj/Tarab) | **Stage C v2**, capped ~2% of mixture | `data/raw/tarab/` | **428.8K** (post-dedup) | CC-BY-4.0 |
-| [Lisan-Sudanese](https://huggingface.co/datasets/AymanMansour/Lisan-Sudanese-TTS-Dataset) (via TTS mirrors) | **Stage C v2** + **Lisan holdout eval** (15% held out) | `data/raw/lisan/` | **47.0K** | CC-BY-4.0 |
-| [Organic Sudanese sample](https://huggingface.co/datasets/ebubekr53/organic-sudanese-arabic-dialect-dataset) | **Stage C v2** (via `sudani.py`) | `data/raw/organic_sudanese/` | **3.6K** | CC-BY-4.0 |
-| [Alexandria — SD subset](https://huggingface.co/datasets/UBC-NLP/alexandria) | ⚠️ **reserved** — eval/seed material only, not training | `data/raw/alexandria_sd/` | 345 conversations | CC-BY-NC-4.0 |
-| oddadmix Sudanese transcripts ([podcast](https://huggingface.co/datasets/oddadmix/arabic-audio-collection-sudanese-sudan-podcast), nuuar, gobara) | **Stage C v2** | `data/raw/oddadmix/` | **2.49M** (255 episodes, 6,545 docs) | unstated (scraped YouTube) — private use only |
-| [sudaneseonline.com forum crawl](https://sudaneseonline.com/board/index.htm) | **Stage C v2**: dialect-scored, mixture takes score ≥0.5 ≈ **19.6M tokens** | `data/raw/sudaneseonline/` | **~243M** total (69,633 threads; 99.4% of unique threads) | site content, authors' copyright — private use only |
-
-The v2 rule of thumb: every source lands in `data/raw/<name>/`, gets a preprocessing module
-producing `data/interim/<name>/{train,val}.jsonl` split by container (episode / thread / song —
-never by post), and enters training only through a mixture manifest (`configs/mixtures/*.yaml`)
-that records per-source token counts in the pack's `meta.json`.
+Pipeline rule (applies to every row): each source lands in `data/raw/<name>/`, gets a
+preprocessing module producing `data/interim/<name>/{train,val}.jsonl` split by container
+(episode / thread / channel-section / article — never by post), is dialect-scored per doc,
+passes a spot audit and the Flores-DEVTEST 8-gram leakage screen
+(`src/preprocessing/leakage_screen.py`, zero hits across all files 2026-08-31), and enters
+training only through a mixture manifest (`configs/mixtures/*.yaml`) that records per-source
+token counts in the pack's `meta.json`.
 
 ---
 
@@ -391,6 +412,9 @@ gate (≥80%) passed.
 
 - **Role:** **Stage C v2**, dialect-ranked: the mixture takes threads with dialect score ≥0.5 ≈ **19.6M tokens** (~5.8M at ≥0.8) of the **~243M** extracted · **Path:** `data/raw/sudaneseonline/` (`html/` 72,761 gzipped thread pages = 99.4% of the ~73,180 unique threads in the site's sitemaps; the 110,410 sitemap URLs list most threads twice) · **Interim:** `data/interim/sudaneseonline/{train,val}.jsonl`, 69,633 threads, each row carrying a `dialect` probability
 - **License:** forum posts, authors' copyright — **private use only, never redistributed**. robots.txt disallows only `/admin/`; the crawl was single-threaded, rate-limited, self-identifying, with error backoff (finished 2026-08-23, 2 hard failures).
+- **Procured:** [sudaneseonline.com](https://sudaneseonline.com) static thread archives, crawled by
+  `scripts/scrape_sudaneseonline.py`: thread URLs enumerated from the site's sitemap index, ids
+  parsed with `[-/](\d+)\.html?` (threads appear under two URL shapes), one gzipped page per thread.
 
 25+ years of Sudanese forum discussion — the largest native-Sudanese text reservoir on the open
 web. Site quirks handled by `src/preprocessing/sudaneseonline.py`: per-line repair of the
@@ -405,8 +429,127 @@ dialect-seasoned opinion; <0.3 is MSA news.
 **Example (score 0.92):**
 `جيت جاري جري علي البيت.. قلت متين اصل.. والعنقريب جاك زول.. فتران فتر شديد وتعبان تعب شديد ..و....نعسااااان`
 
+## Telegram channels (wave 3)
+
+- **Role:** **Stage C v2**, dialect-ranked — **58.14M tokens** total, of which **47.11M gold (≥0.8)** + 4.62M seasoned (0.5–0.8) + 6.42M silver · **Path:** `data/raw/telegram/` (16 channels, 632 MB preview-page JSON) · **Interim:** `data/interim/telegram/{train,val}.jsonl` — 24,996 docs / 190.6M chars, each row carrying `dialect`; val = the **last 2% of docs per channel, contiguous by message id** (adjacent serial-fiction chapters share plot — a random split would leak)
+- **License:** channel authors' copyright — **private use only, never redistributed**. Public preview pages, no robots restrictions (`t.me/robots.txt` 404), polite single-threaded crawl.
+- **Procured:** `scripts/scrape_telegram.py` — fetches `https://t.me/s/<channel>` (Telegram's public
+  web preview, ~20 messages/page of static HTML), paginating with the `?before=<lowest-id>` cursor
+  down to message id 1; resumable by page file. The 16 channels (msgs kept after preview
+  pagination; **discovery vector:** cross-promo lists posted inside Sudanese channels — the
+  directory sites are all 403):
+  [nasra8ya](https://t.me/s/nasra8ya) 33,973 · [rwayatSudan](https://t.me/s/rwayatSudan) 46,152 ·
+  [novelsforus2](https://t.me/s/novelsforus2) 11,864 · [klam_sudany](https://t.me/s/klam_sudany) 16,167 ·
+  [sudan_4g](https://t.me/s/sudan_4g) 22,927 · [w00057777](https://t.me/s/w00057777) 9,802 ·
+  [sudanesenovels](https://t.me/s/sudanesenovels) 6,660 · [sudanese_shair](https://t.me/s/sudanese_shair) 3,929 ·
+  [comidyann](https://t.me/s/comidyann) 2,410 · [sudanesevip](https://t.me/s/sudanesevip) 2,051 ·
+  [nikat7e3n](https://t.me/s/nikat7e3n) 1,362 · [Sd_rewaya3t](https://t.me/s/Sd_rewaya3t) 1,152 ·
+  [SudaneseHD](https://t.me/s/SudaneseHD) 805 (أمثال) · [tatwer3](https://t.me/s/tatwer3) 597 (دوبيت) ·
+  [sudanes0](https://t.me/s/sudanes0) 499 · [telegraaaammmmmmm](https://t.me/s/telegraaaammmmmmm) 142.
+  Diwansha3r is listed in `CHANNELS` but unreachable (web preview disabled → 302, zero widgets).
+
+The purest large dialect source in the project: serial fiction (nasra8ya 29.2M tok, rwayatSudan 9.5M, novelsforus2 8.4M, sudanesenovels 5.4M), poetry/دوبيت, أمثال, ونسة. Processed by `src/preprocessing/telegram.py`: HTML-strip, promo/ad drop (URL-carrying messages with little residual Arabic), per-channel line-dedup ≥12 chars (kills join-us footers — collapsed sudan_4g 22,927 msgs → 447 docs), consecutive messages merged into episode-length docs (~6K chars, split at >200-id gaps). Dialect quartiles **[0.88 / 0.973 / 0.991]** — essentially an all-gold corpus; multiplies the project's gold band ~8× on its own.
+
+**Example (score 0.99, nasra8ya):**
+`الرد القبل شوية رديتيهو لي دا بتسميهو شنو ؟ ومن قبيل لاحظت ليك متغيرة حاصل شنو ؟ _ ما حاصل شي خليني أنوم بس مصدعة`
+
+## anasudani.net forum (wave 3)
+
+- **Role:** Stage C v2, dialect-ranked · **Tokens:** 64.6M (gold 9.7M) · **Path:** `data/raw/anasudani/` → `data/interim/anasudani/` · **License:** private use only
+- **Procured:** [anasudani.net](http://www.anasudani.net/forum/) — phpBB 3 forum of the Sudanese
+  diaspora, frozen ~Jan 2017; **no robots.txt at all** (404 → unrestricted). Crawled complete by
+  `scripts/scrape_anasudani.py`: walks `viewforum.php` listings (20 topics/page — pagination step
+  MUST be 20, a step of 40 silently halves coverage) to discover topic ids, then fetches each
+  `viewtopic.php` page; 404s tombstoned in `dead.txt`, throttling handled by cool-down retries.
+  49,559 topics / 68,214 pages. Processed by `src/preprocessing/anasudani.py` (depth-tracking
+  `div.content` extraction, BBCode strip, thread-level seen-line dedup).
+
+## alnilin.com articles + comments (wave 3)
+
+- **Role:** comments = Stage C v2 gold (42.6M tok); articles = silver reservoir (251.2M tok) · **Path:** `data/raw/alnilin/` → `data/interim/alnilin_{comments,posts}/` · **License:** private use only
+- **Procured:** [alnilin.com](https://www.alnilin.com) — major Sudanese news site with an **open
+  WordPress REST API**: `/wp-json/wp/v2/posts` and `/wp-json/wp/v2/comments`, paginated
+  `per_page=100&orderby=id&order=asc`, clean JSON, `X-WP-Total` header gives exact scale.
+  Crawled complete by `scripts/scrape_alnilin.py` (550,832 articles + 561,752 comments, 2.2 GB).
+  Processed by `src/preprocessing/wpjson_clean.py` — comments grouped under their article.
+
+## sudanile.com articles (wave 3)
+
+- **Role:** silver MSA reservoir (188.8M tok) · **Path:** `data/raw/sudanile/` → `data/interim/sudanile_posts/` · **License:** private use only
+- **Procured:** [sudanile.com](https://sudanile.com) — news/opinion site, open wp-json (same
+  endpoints as alnilin), crawled complete by the generic `scripts/scrape_wpjson.py --name sudanile
+  --base https://sudanile.com` (142,731 posts, 0 comments). Columnists drift into dialect,
+  hence the small gold band.
+
+## koorasudan.net articles + comments (wave 3)
+
+- **Role:** comments = Stage C v2 football-fan dialect (3.2M tok); articles = silver (49.8M tok) · **Path:** `data/raw/koorasudan/` → `data/interim/koorasudan_{comments,posts}/` · **License:** private use only
+- **Procured:** [koorasudan.net](https://koorasudan.net) — Sudanese football news; found in the
+  2026-08-31 directory sweep. robots.txt is a bare `User-agent: *` allow-all; open wp-json.
+  Crawled complete same day via `scripts/scrape_wpjson.py --name koorasudan` (130,484 posts +
+  75,599 comments, 518 MB).
+
+## cover-sd.com articles (wave 3)
+
+- **Role:** silver (0.4M tok) · **Path:** `data/raw/cover_sd/` → `data/interim/cover_sd_posts/` · **License:** private use only
+- **Procured:** [cover-sd.com](https://cover-sd.com) (صحيفة كفر ووتر) — small newspaper, clean
+  robots, open wp-json; `scripts/scrape_wpjson.py --name cover_sd` (1,847 posts).
+
+## Blogger cluster (waves 2–3)
+
+- **Role:** Stage C v2 — dialect lives in the lyrics/fiction blogs; the delta blogs are MSA (1.3M tok) · **Path:** `data/raw/blogger/` → `data/interim/blogger/` · **License:** private use only
+- **Procured:** `scripts/scrape_blogger.py` via the Blogger Atom API —
+  `<blog>/feeds/posts/default?max-results=150&start-index=N` returns full post bodies as
+  structured XML, no HTML scraping. 12 blogs: originals
+  [hageebatalfun](http://hageebatalfun.blogspot.com) (كلمات الحقيبة),
+  [sudaneseshortstorieswriters](http://sudaneseshortstorieswriters.blogspot.com),
+  [sudanese-novels](http://sudanese-novels.blogspot.com),
+  [katabsudsnese](http://katabsudsnese.blogspot.com); 2026-08-31 delta (from
+  mtwersd.com/sudanese-blogs/): [unothati](https://unothati.blogspot.com),
+  [olive2020](https://olive2020.blogspot.com), [ajba77](https://ajba77.blogspot.com),
+  [sudanesemollified](https://sudanesemollified.blogspot.com),
+  [salahamza2](https://salahamza2.blogspot.com), [ar-cher](https://ar-cher.blogspot.com),
+  [22montser2019](https://22montser2019.blogspot.com),
+  [trendsudani](https://trendsudani.blogspot.com). Processed by `src/preprocessing/blogger.py`.
+
+## aghaniwamthal.com (wave 3)
+
+- **Role:** Stage C v2 — proverbs + Haqiba lyrics (0.24M tok) · **Path:** `data/raw/small_sites/aghaniwamthal/` → `data/interim/small_sites/aghaniwamthal/` · **License:** private use only
+- **Procured:** [aghaniwamthal.com](https://aghaniwamthal.com) (أجمل الأمثال والأغاني السودانية) —
+  same-domain BFS mirror by `scripts/scrape_small_sites.py --site aghaniwamthal --base
+  https://aghaniwamthal.com` (2,039 pages / 54 MB; robots permissive). Processed by
+  `src/preprocessing/small_sites.py` (document-frequency boilerplate removal: any line on >5%
+  of pages is chrome).
+
+## Dead-forum archives — Wayback + Common Crawl (wave 3, crawling)
+
+- **Role:** Stage C v2 once complete · **Path:** `data/raw/wayback/<domain>/`, `data/raw/commoncrawl/<domain>/` → `data/interim/vbarchive/<domain>/` · **License:** private use only
+- **Procured:** two miners over the same dead Sudanese forums, cross-source deduped at
+  preprocessing. **Wayback** (`scripts/scrape_wayback.py`): CDX enumeration
+  (`web.archive.org/cdx/search/cdx?url=<domain>/*&matchType=domain`) then raw snapshot fetch via
+  the `id_` endpoint at ~1 req/s. Domains: sudanyat.org, mugrn.net, algorer.net, sudanelite.com,
+  alhasahisa.org, hurriyatsudan.com (vBulletin, `archive/index.php/t-N.html`) + sudanesesongs.net
+  (IPB lyrics forum, added in the final sweep). **Common Crawl**
+  (`scripts/scrape_commoncrawl.py`): per-collection CDX index queries filtered to
+  `status:200` (the forums 406'd CC's UA in some years), then byte-range GETs against
+  `data.commoncrawl.org`; payloads are windows-1256. wadmadani.com is covered by this route
+  (its live crawl was stopped when the site began 403ing our UA). Processed by
+  `src/preprocessing/vbarchive.py` (vB archive / vB showthread / IPB post containers,
+  cp1256+mojibake repair, domain-level line dedup).
+
+## muzammilsoft/Sudanese_dialect_dataset (wave 3, pending QC)
+
+- **Role:** candidate for the synthetic pool only — **LLM-generated**, never counts as organic · **Path:** `data/raw/hf_muzammilsoft/` (13.6 MB, 2 jsonl files) · **License:** CC-BY-4.0
+- **Procured:** [HuggingFace](https://huggingface.co/datasets/muzammilsoft/Sudanese_dialect_dataset),
+  published 2026-08-27, downloaded via `hf_hub_download`. Instruction/input/output schema with
+  "THINKING" traces; enters training only if it passes our own synthesis QC suite.
+
 ## Synthesis pipeline artifacts (v2)
 
+- **Generated by:** `src/synthesis/synth_data.py` (e.g. `synth_data sonnet 1000 gemma3:27b 1000`) —
+  persona-card + seed-sampled generation against the models in `MODEL_REGISTRY`; QC'd on demand by
+  `src/synthesis/qc.py` (`filtered.jsonl` is the kept pool). Full method record: `data/SYNTHSHEET.md`
+  and `src/synthesis/report.md`.
 - **Path:** `data/interim/synthetic/` — `blocklist.json` (the DECISIONS.md off-record rule,
   enforced by `src/synthesis/blocklist.py` asserts), `card_inputs/` (42 persona-card
   distillation prompts + owner card — these files are exactly what leaves the machine during
@@ -423,14 +566,13 @@ dialect-seasoned opinion; <0.3 is MSA news.
 - **Path:** `data/interim/synthetic/situations.jsonl` (~2,000 entries) · **Built:** 2026-08-27, offline, via Verbalized Sampling (Claude Sonnet, k=8 candidates with probabilities per call)
 - **Role:** the only topic source the generators ever see — two-sentence Sudanese situations with a causal hook, rooted in the personas' measured topic distributions × an attribute grid (time-of-day / emotional valence / arc / media). Replaces flat topic nouns; the generator never free-chooses a topic (mode-collapse guard). Regenerable with `python -m src.synthesis.situations build`.
 
-### Acquisition wave 3 (audited 2026-08-28, crawls in progress)
+### Acquisition wave 3 — provenance notes
 
-| Source | Category | Est. volume | Dialect | Status |
-|---|---|---|---|---|
-| Telegram public channels (5 complete: novelsforus2, klam_sudany, sudanesenovels, Sd_rewaya3t, sudanes0; Diwansha3r unreachable — web preview disabled) | social/serial fiction | 1,953 preview pages, **162 MB** raw | **very high** (pure عامي) | **crawled** (`data/raw/telegram/`, `scripts/scrape_telegram.py`) |
-| [alnilin.com](https://www.alnilin.com) via open WP REST | news + **561,752 reader comments** | ~550K articles + comments | articles low (MSA) / comments **high** | crawling (`data/raw/alnilin/`, `scripts/scrape_alnilin.py`) |
-| anasudani.net forum (phpBB, frozen 2017, 1.16M posts, no robots restrictions) | forum | ~1.16M posts | high | queued — scraper next |
-| Dead vBulletin forums via Wayback (sudanyat, mugrn, algorer, sudanelite, alhasahisa) | forums | unknown | high | queued |
-| **Excluded on explicit refusal**: alrakoba.net + vb.alrakoba.net (145K threads), altaghyeer.info, sudanakhbar.com — all carry `Content-Signal: ai-train=no` and/or disallow AI crawlers; respected | — | — | — | excluded |
-
-All wave-3 crawls: single-threaded, rate-limited, honest UA, robots-respecting; private use only, never redistributed.
+Per-dataset numbers live in the **Summary table** at the top (single source of truth);
+per-site crawl verdicts, exclusions (alrakoba, altaghyeer, sudanakhbar, waslat, the
+Forumotion namespace — all `ai-train=no` and/or AI-crawler disallows, respected), and the
+final-sweep audit trail live in `data/SCRAPESHEET.md`. All wave-3 crawls: single-threaded,
+rate-limited, honest UA, robots-respecting; private use only, never redistributed.
+Telegram delta detail worth keeping here: 11 channels, 124,150 msgs, every channel
+paginated to message id 1 (shortfalls vs id-ceilings are channel deletions, not crawl gaps);
+Diwansha3r remains unreachable (web preview disabled).

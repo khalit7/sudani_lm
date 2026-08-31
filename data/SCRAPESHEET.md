@@ -37,7 +37,9 @@ scale and dialect figures below were probed live on that date). Plan of record: 
 | **t.me/s/sudanesenovels** | Telegram serial fiction | 336 pages, **complete**, 47 MB | **very high** | easy | **yes** | Novel chapters, heavy dialogue. |
 | **t.me/s/Sd_rewaya3t** | Telegram serial fiction | 60 pages, **complete**, 9.9 MB | **very high** | easy | **yes** | |
 | **t.me/s/sudanes0** | Telegram misc | 31 pages, **complete**, 1.6 MB | high | easy | **yes** | |
-| **t.me/s/Diwansha3r** | Telegram poetry / دوبيت | 0 pages | high | **unavailable** | **no (preview disabled)** | Verified 2026-08-28: `t.me/s/Diwansha3r` 302-redirects to the plain channel page with zero message widgets — the channel has its web preview disabled, so the `t.me/s/` method cannot reach it. Not a crawler bug. |
+| **t.me/s/Diwansha3r** | Telegram poetry / دوبيت | 0 pages | high | **unavailable** | **no (preview disabled)** | Verified 2026-08-28: `t.me/s/Diwansha3r` 302-redirects to the plain channel page with zero message widgets — the channel has its web preview disabled, so the `t.me/s/` method cannot reach it. Not a crawler bug. Re-verified 2026-08-31 incl. the `?before=` bypass — still unreachable; `tatwer3` (real دوبيت) is the partial substitute. |
+| **Telegram 2026-08-31 delta (11 channels)** — **nasra8ya** (عشاق الروايات, 33,973 msgs / **105.7M chars**), **rwayatSudan** (46,152 / 37.3M), w00057777 (9,802 / 7.7M, ad-diluted), sudan_4g (22,927 / 3.8M), comidyann (2.5M), sudanese_shair (1.9M), telegraaaammmmmmm (142 msgs / 0.6M — densest dialect measured, 6.3 markers/1k), sudanesevip, nikat7e3n, tatwer3 (دوبيت), SudaneseHD (أمثال) | Telegram fiction / poetry / proverbs / ونسة | **complete: 124,150 msgs / ~161M chars raw** (≈35–45M raw tokens pre-dedup), 470 MB, all channels paginated to id 1 same day | **very high** — verified samples per channel | easy | **yes** | The find of the final sweep — bigger high-dialect delta than everything else combined. Message counts < id-ceilings are channel deletions, not crawl gaps (every channel terminated at id ≤ 1). Found via **cross-promo lists inside channels** (the directory sites are all 403 now). Rejected after probing: storykaligi/ahgeel/oshaq_elrewayat/ROAYATE1 (**Egyptian**), amal14097y (promo spam), nabdalsudan (sports MSA), kuatrSD (MSA quotes), 9 preview-disabled channels. |
+| **Common Crawl bolt-on** — historical WARCs of sudanyat/mugrn/algorer/wadmadani | dead-forum thread pages | agent 5-crawl sample: ~5–8k unique pages; full 127-collection index sweep running (sudanyat alone >4.6k URLs after 8 collections) | high | easy (Range GETs, unthrottled) | **partial (crawling)** | `scripts/scrape_commoncrawl.py` (2026-08-31): CDX per collection, `filter==status:200` (many records are 406 — forums refused CC's UA some years), byte-range fetch from data.commoncrawl.org, payloads stored raw (windows-1256 → existing cp1256 repair). Heavy overlap with Wayback expected; preprocessing dedups. kooora is NOT recoverable this way (2 CC blocks, generic pan-Arab threads only). |
 | **alnilin.com** (comments) | news comments | **561,752 comments**, complete (5,618 pages) | **very high** | easy | **yes** | Open WordPress REST (`/wp-json/wp/v2/comments`), clean JSON, `X-WP-Total` gives exact scale. Reader comments are where dialect lives. |
 | **alnilin.com** (articles) | news | **550,832 articles**, complete (5,509 pages, 2.2 GB total with comments) | low (silver) | easy | **yes** | Via wp-json `posts` endpoint. Sudan-topical MSA, ranked down by the classifier. |
 | **anasudani.net/forum** | forum (phpBB) | **1,161,442 posts / 52,973 topics / 26,496 members**; frozen ~Jan 2017 | high | easy | **partial** | Crawling. **No robots.txt at all** (404 → unrestricted). Discovery walks `viewforum.php` listings (paginates by 20 — stepping 40 in round 1 silently halved coverage; fixed, re-discovering), then per-topic fetch. |
@@ -48,13 +50,19 @@ scale and dialect figures below were probed live on that date). Plan of record: 
 | **algorer.net/vb** (القـريـر) | dead forum | thread IDs ≥ **20,071**; DNS dead | high | moderate | **partial** | Wayback mining running; indexed threads include أمثال/سيرة سودانية collections. |
 | **sudanelite.com/vb** | dead forum | connection refused | high | moderate | **queued** | Wayback only. |
 | **alhasahisa.org** | dead forum | DNS dead | high | moderate | **queued** | Wayback only. |
-| **forum.kooora.com?f=132** | forum, football | Sudanese section of a large pan-Arab board, multi-page | high | moderate | **queued** | ⚠️ **Encoding quirk: `charset=windows-1256`** — must iconv; UTF-8 readers get mojibake. `f.aspx?f=132&pg=N`. |
-| **`*.sudanforums.net`, `*.yoo7.com`, ahlamontada, 7olm** (shababkulkoal, watane, hausa, awladalfawo, eymoo, alhilalalsudan, alhelal, alhilal-sd, almoatn, abdo111, newsudan) | forum long tail | small: shababkulkoal **4,979 posts**, almoatn **900 posts** | high | easy | **queued** | Individually negligible, collectively worth a few million words. Uniform Forumotion HTML — one scraper covers the whole namespace. Low priority. |
-| **Blogger cluster** — hageebatalfun (كلمات الحقيبة), sudaneseshortstorieswriters, sudanese-novels, katabsudsnese | lyrics / stories | small–mid, all reachable | **high** | easy | **yes** | Complete via Blogger Atom feeds — the four blogs are tiny (25–300 posts each); Haqiba lyrics captured. |
+| **forum.kooora.com?f=132** | forum, football | Sudanese section of a large pan-Arab board, multi-page | high | dead | **no (forum removed)** | 2026-08-31 recheck: kooora redesigned; `?f=132` now 301→`/404`. Wayback recovery impractical — CDX regex filters over the whole (huge) domain 504 server-side; would need full domain pagination for football-fan chatter. Skipped. |
+| **`*.sudanforums.net`, `*.yoo7.com`, ahlamontada, 7olm** (shababkulkoal, watane, hausa, awladalfawo, eymoo, alhilalalsudan, alhelal, alhilal-sd, almoatn, abdo111, newsudan) | forum long tail | small: shababkulkoal **4,979 posts**, almoatn **900 posts** | high | easy | **EXCLUDED (robots)** | 2026-08-31 recheck: the Forumotion platform robots.txt (served identically on every `*.sudanforums.net`-style host) lists `anthropic-ai`, `ClaudeBot`, `Claude-Web`, `CCbot` (and dozens more bots) with `Disallow: /`. Whole namespace excluded per policy. |
+| **Blogger cluster** — hageebatalfun (كلمات الحقيبة), sudaneseshortstorieswriters, sudanese-novels, katabsudsnese **+ 2026-08-31 delta:** unothati, olive2020, ajba77, sudanesemollified, salahamza2, ar-cher, 22montser2019, trendsudani | lyrics / stories / personal, women's & cooking blogs | 12 blogs, ~30 MB Atom XML total (unothati alone 577 posts / 9.7 MB) | **high** | easy | **yes** | Complete via Blogger Atom feeds. Delta found via mtwersd.com/sudanese-blogs/; personal/cooking registers are colloquial. |
 | **aghaniwamthal.com** | proverbs + lyrics | small (136 KB home) | **high, very clean** | easy | **yes** | Complete — BFS mirror, 2,039 pages / 54 MB. Token-for-token the densest dialect found. |
+| **koorasudan.net** (كورة سودانية) | sports news + **comments** | **130,484 posts + 75,599 comments**, complete (1,305 + 756 wp-json pages, 518 MB) | posts low, **comments high** — football fans write the way they talk | easy | **yes** | Found 2026-08-31 via directory sweep; crawl complete same day. robots.txt is a bare `User-agent: *` allow-all; open wp-json. Best find of the directory sweep — ~⅛ of alnilin's comment volume. |
+| **cover-sd.com** (صحيفة كفر ووتر) | news | **1,847 posts** (`X-WP-Total`) | low | easy | **partial (crawling)** | Found 2026-08-31. Clean robots, open wp-json; opportunistic 20-minute crawl. |
+| **sudanesesongs.net** (مكتبة الأغنية السودانية) | dead lyrics **forum** (IPB) | **58 Wayback page-blocks** — deeper than sudanyat (43) or hurriyatsudan (44) | **high** — lyrics + fan discussion | moderate | **partial (wayback)** | Found 2026-08-31; DNS-dead. Added to `scrape_wayback.py` DOMAINS with new IPB URL patterns (`showtopic`, `lofiversion`); dedicated miner instance running. |
+| **sudancam.net** | dead news site | 35 Wayback page-blocks | low | moderate | **no (low priority)** | Wayback-minable but silver-tier news; only if that tier runs dry. |
+| **alsoug.com** (سوق السودان) | classifieds | largest Sudanese classifieds site | med but short/templated ad text | **JS-required** | **no** | Robots clean, but the site is an SPA with no server-rendered listing links — needs headless rendering for low token density. Revisit only if we ever build JS rendering. |
+| **sammaniya.org** | Sufi order / مديح | — | — | — | **no** | 2026-08-31: the domain just 301-redirects to a Facebook page. Nothing to crawl. |
 | **alsudaninews.com** (صحيفة السوداني) | news | **~5,302** listing pages ≈ 50K+ articles | low | easy | **queued** | WordPress, `?p=<id>`; no AI-crawler disallows found. Silver. |
 | **dabangasudan.org** (ar) | news | **25,432** posts (all languages) | low | easy | **queued** | wp-json; human-rights reportage, MSA. Low priority. |
-| **sudaress.com** | press aggregator | URL pattern `/{paper}/{sequential-id}`; **101** Wayback page-blocks | low | **currently down** | **no (revisit)** | Returned **HTTP 523** (Cloudflare: origin unreachable) on every probe including `/robots.txt` — we could not read its policy, so we cannot crawl it. Per-paper sequential IDs make it trivially enumerable *if* it returns. Re-check later; Wayback is the fallback. |
+| **sudaress.com** | press aggregator | URL pattern `/{paper}/{sequential-id}`; **101** Wayback page-blocks | low | **origin down** | **no (revisit)** | 2026-08-31 recheck: apex now serves robots.txt from the Cloudflare edge — it is the Content-Signal *preamble only*, no signal line, no Disallow (nothing restricts us) — but the site itself is still dead: apex 301→www, www origin 523. Aggregator of alnilin/sudanile-class news → mostly duplicate MSA; low value even if it returns. |
 | **alsahafa.info · altayar.info · aljareeda.net · sudanhorizon.com · darfur24.com · sudanpost.info** | news | thin: sitemap indices carry only 4–27 children | low | easy | **no** | Alive but small MSA archives; not worth crawler time while sudanile and alnilin are unfinished. Revisit only if the silver tier runs dry. |
 | **alrakoba.net** | news | large | low–med | — | **no (excluded)** | **Excluded on policy.** Explicit AI-crawler disallows / `ai-train=no`. |
 | **vb.alrakoba.net** (منتديات الراكوبة) | forum (XenForo) | thread IDs ≥ **145,739** — the single largest live Sudanese forum found | **high** | blocked | **no (excluded)** | **Excluded on policy, despite being the #1 target by raw size.** Cloudflare robots sets `Content-Signal: search=yes, ai-train=no, use=reference` and explicitly disallows `ClaudeBot`, `GPTBot`, `CCBot`, `Google-Extended`, `Amazonbot`, `meta-externalagent`; returns 403 to non-browser clients. Note this is a *separate* forum from the alrakoba news domain. |
@@ -69,20 +77,35 @@ scale and dialect figures below were probed live on that date). Plan of record: 
 | **r/Sudan** | social | — | **low** (mostly English) | hard | **no** | Anonymous `.json` endpoints now return the HTML shell on both `www` and `old.reddit.com`; would need OAuth. Poor dialect return for the effort. |
 | **YouTube Sudanese channels (auto-captions)** | transcripts | — | high (speech) | moderate, noisy | **no** | Arabic ASR is MSA-biased and mangles Sudanese; would inject MSA-normalised pseudo-dialect. We already hold cleaner speech-derived text via oddadmix transcripts (2.49M tokens). |
 | **Facebook / X public pages** | social | large | very high | hard | **no** | Auth walls and ToS; not attempted. |
+| **archive.org Arabic-Sudan texts** | OCR'd books | 3,765 Sudan matches but only ~16 Arabic+Sudan items with `_djvu.txt` layers | low (historical-political MSA monographs) | easy | **no (settled 2026-08-31)** | Same register we declined at sudanmemory.org, plus severe Arabic OCR noise. Dialect-term queries (أمثال سودانية etc.) return zero. No Archive Team WARCs of Sudanese forums exist. |
+| **HF `muzammilsoft/Sudanese_dialect_dataset`** | **synthetic** instruction data | 13.6 MB (2 jsonl files), CC-BY-4.0, published 2026-08-27 | very high but **LLM-generated** | easy | **yes (downloaded)** | New since our HF survey. Downloaded to `data/raw/hf_muzammilsoft/` for evaluation against our own synth QC — belongs to the synthetic pool (SYNTHSHEET), never to the organic web corpus. |
+| **HF `ArSyra/arsyra-sudanese`** | expert-written dialect | unknown | likely high | **gated (401)** | **no** | Needs a HF access request from the account owner — user action if wanted. |
+| **HF `O96a/sudanese-mt-benchmark`** | eval set | <1K rows | high | easy | **no — hold out** | Benchmark data (arXiv:2507.20301). Keep OUT of training like Flores DEVTEST. |
+| **fnanen.com · Wikisource · Wattpad · Bluesky/Mastodon · Sudanese podcasts RSS** | misc | — | — | — | **no (settled 2026-08-31)** | fnanen: unrestricted robots but no Sudanese section. Wikisource: 1930s مجلة الرسالة MSA, negligible. Wattpad: crawlable but Arabic writing there is Egyptian/Gulf — Sudanese fiction lives on Telegram. Bluesky/Mastodon: negligible presence. Podcasts: audio-only feeds, no transcripts; YouTube `@alsudanpodcast` captions all `kind=asr` (auto) — confirms the existing ASR exclusion. |
 
 ## Discovery resources (for extending this table)
 
-- **`sudan2.com/dir/site-NNNN.html`** — "بنك المواقع السودانية", sequential IDs verified to at
-  least **1169**, ~15 KB per described site. Cheapest way to enumerate the long tail.
-  Cert quirk: valid for apex `sudan2.com` only, **not** `www.sudan2.com`.
-- `sudaneseonline.com/board/30/msg/-1361141364.html` — in-forum directory of 66+ Sudanese sites
-  (mostly dead → Wayback candidates).
-- `mtwersd.com/sudanese-blogs/` and `/bigger-sudanese-websites/` — curated Sudanese site lists.
-- Telegram channel discovery: `telemetr.io/en/catalog/sudan`, `tgstat.com`,
-  `dir-telegram.blogspot.com`; also `site:t.me` search with dialect markers
-  (شنو، دايراك، كيفن، زهجت) works well. Each new channel is one line in `CHANNELS` —
-  note that preview-disabled channels (302 from `t.me/s/`) are unreachable by this method.
-- `waslat.com/Sudan` — directory, was returning 522 on survey day.
+- **`sudan2.com/dir`** — **EXHAUSTED 2026-08-31.** Real pagination is `dir/orderbylast-{1..19}.html`;
+  the bank holds only **73 entries** total (IDs sparse to 8289 — unlisted IDs serve a generic shell),
+  mostly 2010-era angelfire/geocities personal pages. Nothing further here.
+- ~~`sudaneseonline.com/board/30/msg/-1361141364.html`~~ — **mislabelled, worthless**: not a site
+  directory but one user's parked-domain sale portfolio (~90 domains, all dead, ≤1 Wayback block each).
+- `mtwersd.com/sudanese-blogs/` — **harvested 2026-08-31** (8-blog Blogger delta, done);
+  `/bigger-sudanese-websites/` — pure overlap with this table, nothing new.
+- Telegram channel discovery — **updated 2026-08-31**: the directory sites are dead to us
+  (telemetr.io and tgstat 403 even to browsers/WebFetch; telegram-store 404; dir-telegram
+  has no Sudan links). The vector that actually works is **cross-promotion lists posted
+  inside Sudanese channels themselves** (that is how nasra8ya, the largest find, surfaced)
+  plus `site:t.me` searches with dialect markers (شنو، دايراك، كيفن، زهجت). Each new channel
+  is one line in `CHANNELS`; preview-disabled channels (302 from `t.me/s/`) are unreachable.
+  ⚠️ Verify dialect before crawling: several huge "روايات" channels are Egyptian
+  (storykaligi, ahgeel, oshaq_elrewayat, ROAYATE1 — all rejected).
+- `waslat.com/Sudan` — back up 2026-08-31 but **EXCLUDED**: `Content-Signal:
+  search=yes, ai-train=no, use=reference` plus explicit `Disallow: /` for ClaudeBot/GPTBot/CCBot.
+  Do not retry.
+- Dead-forum long tail is **unarchived**, not just dead: shatyalnail.net, nbdalsudan.com,
+  helatomar.net, chatsudan.com, albahala.com, alsagia.com, orbinanet.com, igdelgalad.net all
+  carry 1–6 Wayback page-blocks (vs 43–58 for the forums we mine). No recovery possible.
 - Wayback CDX scale check used throughout:
   `http://web.archive.org/cdx/search/cdx?url=<domain>&matchType=domain&showNumPages=true`.
 
@@ -99,6 +122,7 @@ scale and dialect figures below were probed live on that date). Plan of record: 
 | `scripts/scrape_small_sites.py` | tiny sites (aghaniwamthal, …) | polite same-domain BFS, capped |
 | `scripts/scrape_wayback.py` | 6 dead forum domains | CDX enumerate → snapshot fetch |
 | `scripts/scrape_wadmadani.py` | wadmadani.com/vb | archive-page sweep at crawl-delay 60 |
+| `scripts/scrape_commoncrawl.py` | CC WARCs of 4 dead forums | per-collection CDX index → byte-range GETs |
 | `scripts/crawl_watchdog.sh` | the fleet | 10-min health checks: death/stall detection |
 | `scripts/download_sudanese_sources.py` | HF datasets | not a crawler — public dataset pulls |
 
@@ -113,7 +137,7 @@ and is single-threaded with a fixed delay.
 4. Wayback pass over the five dead vBulletin forums (uniform `archive/index.php/t-N.html`).
 5. `wadmadani.com` at crawl-delay 60, Wayback backfill.
 6. sudanile wp-json for bulk silver.
-7. kooora Sudanese section (windows-1256), then the Blogger/Forumotion long tail.
+7. ~~kooora Sudanese section~~ (forum removed from live site, 2026-08-31) and ~~Forumotion long tail~~ (platform robots blocks AI crawlers — excluded, 2026-08-31).
 
 ---
 
