@@ -33,6 +33,11 @@ MAX_CONSECUTIVE_FAILURES = 15
 CHANNELS = [
     "novelsforus2", "klam_sudany", "sudanesenovels", "Sd_rewaya3t",
     "sudanes0", "Diwansha3r",
+    # 2026-08-31 final-sweep delta (found via in-channel cross-promo lists — the directories
+    # are all 403 now). Ordered biggest-first: nasra8ya ~74k msgs, rwayatSudan ~66k.
+    "nasra8ya", "rwayatSudan", "w00057777", "tatwer3", "SudaneseHD",
+    "sudanese_shair", "telegraaaammmmmmm", "sudanesevip", "sudan_4g",
+    "comidyann", "nikat7e3n",
 ]
 
 MESSAGE_RE = re.compile(

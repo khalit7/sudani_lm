@@ -22,6 +22,15 @@ BLOGS = {
     "sudaneseshortstories": "http://sudaneseshortstorieswriters.blogspot.com",
     "sudanese_novels": "http://sudanese-novels.blogspot.com",
     "katabsudsnese": "http://katabsudsnese.blogspot.com",
+    # 2026-08-31 delta from mtwersd.com/sudanese-blogs/ (personal/women's/cooking registers)
+    "unothati": "https://unothati.blogspot.com",
+    "olive2020": "https://olive2020.blogspot.com",
+    "ajba77": "https://ajba77.blogspot.com",
+    "sudanesemollified": "https://sudanesemollified.blogspot.com",
+    "salahamza2": "https://salahamza2.blogspot.com",
+    "ar_cher": "https://ar-cher.blogspot.com",
+    "montser2019": "https://22montser2019.blogspot.com",
+    "trendsudani": "https://trendsudani.blogspot.com",
 }
 BATCH = 150      # blogger caps max-results in practice; 150 is reliably honoured
 

@@ -94,22 +94,44 @@ def train() -> int:
     return 0
 
 
-def score_file(path) -> int:
-    """Adds a `dialect` probability to every row, rewriting the file in place."""
+def score_file(path, chunk_rows: int = 20_000) -> int:
+    """Adds a `dialect` probability to every row, rewriting the file atomically.
+
+    Streams in chunks: the wave-3 corpora (alnilin_posts 1.7GB) OOM-killed the previous
+    load-everything version, and an in-place rewrite killed mid-write truncates the file —
+    hence chunked scoring into a temp file swapped in at the end.
+    """
     import joblib
+    import numpy as np
 
     model = joblib.load(MODEL_PATH)
     path = Path(path)
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    # score on a bounded prefix: a 100KB thread's tail adds nothing to its register call
-    probs = model.predict_proba([row["text"][:3000] for row in rows])[:, 1]
-    with open(path, "w", encoding="utf-8") as fh:
-        for row, prob in zip(rows, probs):
+    tmp_path = path.with_suffix(".jsonl.scoring")
+    all_probs, n_rows, chunk = [], 0, []
+
+    def score_chunk(fh):
+        nonlocal chunk
+        # score on a bounded prefix: a 100KB thread's tail adds nothing to its register call
+        probs = model.predict_proba([row["text"][:3000] for row in chunk])[:, 1]
+        for row, prob in zip(chunk, probs):
             row["dialect"] = round(float(prob), 4)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    import numpy as np
-    print(f"{path}: {len(rows):,} rows scored, dialect quartiles "
-          f"{np.percentile(probs, [25, 50, 75]).round(3).tolist()}")
+        all_probs.extend(probs.tolist())
+        chunk = []
+
+    with open(tmp_path, "w", encoding="utf-8") as out_fh, open(path, encoding="utf-8") as in_fh:
+        for line in in_fh:
+            if not line.strip():
+                continue
+            chunk.append(json.loads(line))
+            n_rows += 1
+            if len(chunk) >= chunk_rows:
+                score_chunk(out_fh)
+        if chunk:
+            score_chunk(out_fh)
+    tmp_path.replace(path)
+    print(f"{path}: {n_rows:,} rows scored, dialect quartiles "
+          f"{np.percentile(all_probs, [25, 50, 75]).round(3).tolist()}")
     return 0
 
 

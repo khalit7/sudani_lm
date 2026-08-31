@@ -26,7 +26,8 @@ RAW_DIR = REPO_ROOT / "data" / "raw" / "wayback"
 USER_AGENT = "Mozilla/5.0 (compatible; sudani-lm-crawler; personal research use)"
 
 DOMAINS = ["sudanyat.org", "mugrn.net", "algorer.net", "sudanelite.com",
-           "alhasahisa.org", "hurriyatsudan.com"]
+           "alhasahisa.org", "hurriyatsudan.com",
+           "sudanesesongs.net"]   # IPB lyrics forum, 58 CDX page-blocks (added 2026-08-31)
 CDX = "http://web.archive.org/cdx/search/cdx"
 
 
@@ -64,7 +65,8 @@ def fetch(session, domain, out_dir, delay):
             continue
         url, timestamp = parts
         # forum content only: archive/thread/forum pages, skip assets and login/reply forms
-        if not any(k in url for k in ("archive/index.php", "showthread", "viewtopic", "/vb/")):
+        if not any(k in url for k in ("archive/index.php", "showthread", "viewtopic", "/vb/",
+                                      "showtopic", "lofiversion")):   # last two: IPB boards
             continue
         digest = hashlib.sha1(url.encode()).hexdigest()[:16]
         out = pages_dir / f"{digest}.html.gz"
