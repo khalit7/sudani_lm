@@ -98,6 +98,10 @@ def decode(raw: bytes) -> str:
     return fix_mojibake(text)
 
 
+# Word-pasted posts leave mangled Office XML tags (<o:p>, half-eaten "<O") as literal text
+OFFICE_DEBRIS_RE = re.compile(r"</?[Oo](:[A-Za-z]+)?>?(?=\s|$)", re.M)
+
+
 def extract_page(raw: bytes):
     page = decode(raw)
     title_match = TITLE_RE.search(page)
@@ -109,6 +113,7 @@ def extract_page(raw: bytes):
     parser.feed(page)
     posts = []
     for body in parser.posts:
+        body = OFFICE_DEBRIS_RE.sub("", body)
         lines = [re.sub(r"[ \t]+", " ", line).strip() for line in body.splitlines()]
         body = "\n".join(line for line in lines if line)
         if len(body) >= MIN_POST_CHARS and ARABIC_RE.search(body):
