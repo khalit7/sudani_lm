@@ -1,7 +1,8 @@
-# Notes, plan and local instructions are personal working files
+# Notes, plan and local agent instructions are personal working files
 notes.md
 plan.md
-CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
 
 # Data: ignore everything, keep only the sheets
 data/**
