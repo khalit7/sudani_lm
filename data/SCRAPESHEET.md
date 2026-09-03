@@ -120,7 +120,7 @@ scale and dialect figures below were probed live on that date). Plan of record: 
 | `scripts/scrape_wpjson.py` | any open WP site (sudanile, …) | generic WordPress REST posts/comments |
 | `scripts/scrape_blogger.py` | Blogger cluster | Atom feeds, full post bodies |
 | `scripts/scrape_small_sites.py` | tiny sites (aghaniwamthal, …) | polite same-domain BFS, capped |
-| `scripts/scrape_wayback.py` | 6 dead forum domains | CDX enumerate → snapshot fetch |
+| `scripts/scrape_wayback.py` | 7 dead forum domains | CDX enumerate → snapshot fetch. ⚠️ **2026-09-03: enumeration MUST use resumeKey pagination** — the `page=N` CDX API serves a stale secondary cluster that silently undercounts (mugrn 18K→217K urls, algorer 10K→433K, sudanyat −4%; caught via Wayback-vs-CommonCrawl disagreement). All listings re-verified; algorer fetch scoped to content urls (archive/showthread/printthread, 115K of 433K). hurriyatsudan turned out to be a **news** site (7 forum-shaped urls) — its 42K news pages skipped, silver tier saturated. |
 | `scripts/scrape_wadmadani.py` | wadmadani.com/vb | archive-page sweep at crawl-delay 60 |
 | `scripts/scrape_commoncrawl.py` | CC WARCs of 4 dead forums | per-collection CDX index → byte-range GETs |
 | `scripts/crawl_watchdog.sh` | the fleet | 10-min health checks: death/stall detection |

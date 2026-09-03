@@ -32,23 +32,49 @@ CDX = "http://web.archive.org/cdx/search/cdx"
 
 
 def cdx_enumerate(session, domain, out_dir, delay):
+    """Enumerate captures page by page. A transient archive.org outage must NOT truncate
+    the listing (mugrn.net lost its entire 31k-url /vb/ archive to exactly that on
+    2026-09-02): non-200 responses and HTML bodies (the "Temporarily Offline" page) are
+    retried with backoff, and a truncated listing raises instead of being persisted —
+    only a clean empty-page terminator writes cdx.txt."""
     cdx_path = out_dir / "cdx.txt"
     if cdx_path.exists() and cdx_path.stat().st_size > 0:
         return sum(1 for _ in open(cdx_path))
-    rows = []
-    for page in range(0, 200):
+    seen, rows, failures = set(), [], 0
+    params = {"url": f"{domain}/*", "matchType": "domain",
+              "filter": ["statuscode:200", "mimetype:text/html"],
+              "fl": "original,timestamp", "limit": 25000, "showResumeKey": "true"}
+    while True:
         try:
-            response = session.get(CDX, params={
-                "url": f"{domain}/*", "matchType": "domain",
-                "filter": ["statuscode:200", "mimetype:text/html"],
-                "collapse": "urlkey", "fl": "original,timestamp",
-                "page": page}, timeout=120)
+            response = session.get(CDX, params=params, timeout=120)
         except requests.RequestException:
-            time.sleep(30)
+            response = None
+        bad = (response is None or response.status_code != 200
+               or response.text.lstrip().startswith("<"))
+        if bad:
+            failures += 1
+            if failures > 12:
+                raise RuntimeError(
+                    f"{domain}: CDX enumeration failing persistently — refusing to "
+                    f"write a truncated listing (got {len(rows)} rows)")
+            time.sleep(min(30 * failures, 300))
             continue
-        if response.status_code != 200 or not response.text.strip():
-            break
-        rows.extend(response.text.strip().splitlines())
+        failures = 0
+        lines = response.text.splitlines()
+        # response layout: data lines, then a blank line + resume key when more remain
+        resume_key = None
+        if "" in lines:
+            split = lines.index("")
+            resume_key = next((l for l in lines[split + 1:] if l.strip()), None)
+            lines = lines[:split]
+        for line in lines:
+            url = line.split(" ", 1)[0]
+            if url and url not in seen:          # client-side collapse (resumeKey is
+                seen.add(url)                    # incompatible with collapse=urlkey)
+                rows.append(line)
+        if not resume_key:
+            break                                # clean end of listing
+        params["resumeKey"] = resume_key
         time.sleep(delay)
     with open(cdx_path, "w") as fh:
         fh.write("\n".join(rows))
